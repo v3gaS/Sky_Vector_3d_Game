@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="SkyVector — browser-based 3D flight simulator built with Three.js. Fly over procedural terrain with arcade controls.">
+    <meta name="description" content="SkyVector — browser-based 3D flight simulator with terrain collision, obstacles, AGL HUD, day/night, and arcade flight controls.">
     <title>SkyVector — 3D Flight Simulator</title>
     <style>
         /* SkyVector — browser-based 3D flight simulator */
@@ -132,13 +132,15 @@
             <p><strong>Shift</strong> - Increase throttle</p>
             <p><strong>Control</strong> - Decrease throttle</p>
             <p><strong>V</strong> - Toggle view (Cockpit/External)</p>
-            <p><strong>R</strong> - Reset position</p>
+            <p><strong>R</strong> - Reset / recover after crash</p>
+            <p>Watch <strong>AGL</strong> (height above terrain). Buildings, towers, trees, and mountains are solid.</p>
         </div>
         <div class="start-prompt">Press SPACE or CLICK here to fly</div>
     </div>
     
     <!-- Load Three.js using the standalone build -->
     <script src="vendor/three.js"></script>
+    <script src="js/world-graphics.js"></script>
     
     <script>
         // Simple loading check
@@ -164,17 +166,35 @@
             // Show start screen
             document.getElementById('startScreen').classList.remove('hidden');
             
-            // Initialize the game
+            if (!window.SkyVectorGfx) {
+                document.getElementById('startScreen').innerHTML = '<h1>SkyVector</h1><p>Missing js/world-graphics.js — use a local web server.</p>';
+                document.getElementById('startScreen').classList.remove('hidden');
+                return;
+            }
             initializeGame();
         });
         
         function initializeGame() {
-            // Game state
+            const WATER_LEVEL = 0;
+            const WATER_SURFACE = -10;
+            const PLANE_RADIUS = 10;
+            const COLLISION_RANGE = 900;
+            const CITY_ORIGIN = { x: 1000, z: -1000 };
+            const CITY_CENTER = { x: 1402, z: -598 };
+
             const GameState = {
                 isPlaying: false,
-                viewMode: 'external', // 'cockpit' or 'external'
+                crashed: false,
+                crashMessage: '',
+                viewMode: 'external',
                 startTime: Date.now(),
-                flightTime: 0
+                flightTime: 0,
+                timeOfDay: 0.32,
+                controlPenalty: 0,
+                screenShake: 0,
+                crashFlash: 0,
+                inWater: false,
+                nearestObstacle: null
             };
             
             function clamp(value, min, max) {
@@ -198,6 +218,344 @@
                 const detail = Math.sin((x + z) * 0.0025) * 34 + Math.cos((x - z) * 0.0035) * 22;
                 const noise = seededNoise(Math.floor(x * 0.015), Math.floor(z * 0.015)) * 12;
                 return ridge + detail + noise;
+            }
+
+            function surfaceHeight(x, z) {
+                return Math.max(20, terrainHeight(x, z) + 35);
+            }
+
+            function getAGL(x, y, z) {
+                return y - propGroundHeight(x, z);
+            }
+
+            function meshTerrainHeight(worldX, worldZ) {
+                const terrainSize = 10000;
+                const segments = 200;
+                const half = terrainSize * 0.5;
+                const cell = terrainSize / segments;
+
+                const gx = clamp((x + half) / cell, 0, segments);
+                const gz = clamp((z + half) / cell, 0, segments);
+                const ix = Math.min(Math.floor(gx), segments - 1);
+                const iz = Math.min(Math.floor(gz), segments - 1);
+                const fx = gx - ix;
+                const fz = gz - iz;
+
+                const x0 = -half + ix * cell;
+                const z0 = -half + iz * cell;
+                const x1 = x0 + cell;
+                const z1 = z0 + cell;
+
+                const h00 = terrainHeight(x0, z0);
+                const h10 = terrainHeight(x1, z0);
+                const h01 = terrainHeight(x0, z1);
+                const h11 = terrainHeight(x1, z1);
+                const h0 = h00 * (1 - fx) + h10 * fx;
+                const h1 = h01 * (1 - fx) + h11 * fx;
+                return h0 * (1 - fz) + h1 * fz;
+            }
+
+            function propGroundHeight(worldX, worldZ, halfX, halfZ, blendFootprint) {
+                if (sampleGroundY) {
+                    return sampleGroundY(worldX, worldZ, halfX || 0, halfZ || 0, !!blendFootprint);
+                }
+                return meshTerrainHeight(worldX, worldZ);
+            }
+
+            function isAboveWater(worldX, worldZ, margin) {
+                return propGroundHeight(worldX, worldZ) > WATER_SURFACE + (margin || 4);
+            }
+
+            function runwayOverlapsCity(pad) {
+                const padMargin = 80;
+                const half = pad.length * 0.5 + pad.width * 0.5 + padMargin;
+                const sin = Math.sin(pad.heading);
+                const cos = Math.cos(pad.heading);
+                const cityMinX = CITY_ORIGIN.x - padMargin;
+                const cityMaxX = CITY_ORIGIN.x + 8 * 115 + padMargin;
+                const cityMinZ = CITY_ORIGIN.z - padMargin;
+                const cityMaxZ = CITY_ORIGIN.z + 8 * 115 + padMargin;
+                for (let t = -1; t <= 1; t += 0.5) {
+                    const px = pad.x + sin * half * t;
+                    const pz = pad.z + cos * half * t;
+                    if (px >= cityMinX && px <= cityMaxX && pz >= cityMinZ && pz <= cityMaxZ) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function horizontalDist(ax, az, bx, bz) {
+                const dx = ax - bx;
+                const dz = az - bz;
+                return Math.sqrt(dx * dx + dz * dz);
+            }
+
+            const CollisionSystem = {
+                obstacles: [],
+                mapMarkers: [],
+                clear() {
+                    this.obstacles.length = 0;
+                    this.mapMarkers.length = 0;
+                },
+                addMapMarker(x, z, kind) {
+                    this.mapMarkers.push({ x, z, kind });
+                },
+                registerBox(cx, cy, cz, hx, hy, hz, opts) {
+                    this.obstacles.push({
+                        type: 'box',
+                        x: cx, y: cy, z: cz,
+                        hx, hy, hz,
+                        fatal: opts && opts.fatal !== false,
+                        label: (opts && opts.label) || 'structure'
+                    });
+                },
+                registerCylinder(cx, cy, cz, radius, height, opts) {
+                    this.obstacles.push({
+                        type: 'cylinder',
+                        x: cx, y: cy, z: cz,
+                        radius, height,
+                        fatal: opts && opts.fatal !== false,
+                        label: (opts && opts.label) || 'structure'
+                    });
+                },
+                testSphere(position) {
+                    let best = null;
+                    for (let i = 0; i < this.obstacles.length; i++) {
+                        const o = this.obstacles[i];
+                        const reach = o.type === 'box'
+                            ? Math.max(o.hx, o.hz) + PLANE_RADIUS
+                            : o.radius + PLANE_RADIUS;
+                        if (horizontalDist(position.x, position.z, o.x, o.z) > COLLISION_RANGE + reach) {
+                            continue;
+                        }
+                        let penetration = 0;
+                        if (o.type === 'box') {
+                            const dx = Math.max(Math.abs(position.x - o.x) - o.hx, 0);
+                            const dy = Math.max(Math.abs(position.y - o.y) - o.hy, 0);
+                            const dz = Math.max(Math.abs(position.z - o.z) - o.hz, 0);
+                            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                            if (dist >= PLANE_RADIUS) continue;
+                            penetration = PLANE_RADIUS - dist;
+                        } else {
+                            const halfH = o.height * 0.5;
+                            const yMin = o.y - halfH;
+                            const yMax = o.y + halfH;
+                            if (position.y < yMin - PLANE_RADIUS || position.y > yMax + PLANE_RADIUS) continue;
+                            const flat = horizontalDist(position.x, position.z, o.x, o.z);
+                            if (flat >= o.radius + PLANE_RADIUS) continue;
+                            penetration = (o.radius + PLANE_RADIUS) - flat;
+                        }
+                        if (!best || penetration > best.penetration) {
+                            best = { obstacle: o, penetration };
+                        }
+                    }
+                    return best;
+                },
+                findNearest(position, maxRange) {
+                    let nearest = null;
+                    let nearestDist = maxRange;
+                    for (let i = 0; i < this.obstacles.length; i++) {
+                        const o = this.obstacles[i];
+                        const d = horizontalDist(position.x, position.z, o.x, o.z);
+                        if (d < nearestDist) {
+                            nearestDist = d;
+                            nearest = { obstacle: o, distance: d };
+                        }
+                    }
+                    return nearest;
+                }
+            };
+
+            const AudioFX = {
+                ctx: null,
+                engineGain: null,
+                windGain: null,
+                initialized: false,
+                init() {
+                    if (this.initialized) return;
+                    const Ctx = window.AudioContext || window.webkitAudioContext;
+                    if (!Ctx) return;
+                    this.ctx = new Ctx();
+                    this.engineGain = this.ctx.createGain();
+                    this.windGain = this.ctx.createGain();
+                    const engineOsc = this.ctx.createOscillator();
+                    engineOsc.type = 'sawtooth';
+                    engineOsc.frequency.value = 72;
+                    engineOsc.connect(this.engineGain);
+                    this.engineGain.connect(this.ctx.destination);
+                    this.engineGain.gain.value = 0;
+                    engineOsc.start();
+                    this.engineOsc = engineOsc;
+                    const wind = this.ctx.createBufferSource();
+                    const bufferSize = this.ctx.sampleRate * 2;
+                    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        data[i] = (Math.random() * 2 - 1) * 0.35;
+                    }
+                    wind.buffer = buffer;
+                    wind.loop = true;
+                    const windFilter = this.ctx.createBiquadFilter();
+                    windFilter.type = 'lowpass';
+                    windFilter.frequency.value = 500;
+                    wind.connect(windFilter);
+                    windFilter.connect(this.windGain);
+                    this.windGain.connect(this.ctx.destination);
+                    this.windGain.gain.value = 0;
+                    wind.start();
+                    this.initialized = true;
+                },
+                resume() {
+                    if (this.ctx && this.ctx.state === 'suspended') {
+                        this.ctx.resume();
+                    }
+                },
+                update(throttle, speed, maxSpeed, stall, crashed, inWater) {
+                    if (!this.initialized) return;
+                    if (crashed) {
+                        this.engineGain.gain.value = 0;
+                        this.windGain.gain.value = 0.02;
+                        return;
+                    }
+                    const t = throttle * 0.55 + (speed / maxSpeed) * 0.35;
+                    this.engineGain.gain.value = inWater ? t * 0.15 : t * 0.12;
+                    if (this.engineOsc) {
+                        this.engineOsc.frequency.value = 58 + throttle * 55 + speed * 0.22;
+                    }
+                    this.windGain.gain.value = 0.03 + (speed / maxSpeed) * 0.1;
+                    if (stall) {
+                        this.playStallBeep();
+                    }
+                },
+                lastStallBeep: 0,
+                playStallBeep() {
+                    if (!this.ctx) return;
+                    const now = this.ctx.currentTime;
+                    if (now - this.lastStallBeep < 1.2) return;
+                    this.lastStallBeep = now;
+                    const osc = this.ctx.createOscillator();
+                    const g = this.ctx.createGain();
+                    osc.frequency.value = 280;
+                    osc.type = 'square';
+                    g.gain.value = 0.06;
+                    osc.connect(g);
+                    g.connect(this.ctx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.12);
+                },
+                playCrash() {
+                    if (!this.ctx) return;
+                    const now = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const g = this.ctx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(140, now);
+                    osc.frequency.exponentialRampToValueAtTime(35, now + 0.5);
+                    g.gain.setValueAtTime(0.2, now);
+                    g.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+                    osc.connect(g);
+                    g.connect(this.ctx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.55);
+                },
+                playScrape() {
+                    if (!this.ctx) return;
+                    const now = this.ctx.currentTime;
+                    const noise = this.ctx.createBufferSource();
+                    const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.08, this.ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < data.length; i++) {
+                        data[i] = Math.random() * 2 - 1;
+                    }
+                    noise.buffer = buffer;
+                    const g = this.ctx.createGain();
+                    g.gain.value = 0.08;
+                    noise.connect(g);
+                    g.connect(this.ctx.destination);
+                    noise.start(now);
+                    noise.stop(now + 0.08);
+                },
+                playSplash() {
+                    if (!this.ctx) return;
+                    const now = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const g = this.ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(180, now);
+                    osc.frequency.exponentialRampToValueAtTime(60, now + 0.25);
+                    g.gain.setValueAtTime(0.07, now);
+                    g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+                    osc.connect(g);
+                    g.connect(this.ctx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                }
+            };
+
+            const crashParticles = [];
+            let particlePoints = null;
+            const particlePositions = new Float32Array(300 * 3);
+            const particleVelocities = [];
+
+            function triggerCrash(message) {
+                if (GameState.crashed) return;
+                GameState.crashed = true;
+                GameState.crashMessage = message;
+                GameState.crashFlash = 1;
+                GameState.screenShake = 1.2;
+                FlightModel.speed = 0;
+                FlightModel.throttle = 0;
+                AudioFX.playCrash();
+                spawnCrashParticles();
+            }
+
+            function clearCrashState() {
+                GameState.crashed = false;
+                GameState.crashMessage = '';
+                GameState.crashFlash = 0;
+                GameState.controlPenalty = 0;
+                crashParticles.length = 0;
+                particleVelocities.length = 0;
+                if (particlePoints) particlePoints.visible = false;
+            }
+
+            function spawnCrashParticles() {
+                crashParticles.length = 0;
+                particleVelocities.length = 0;
+                const count = 80;
+                for (let i = 0; i < count; i++) {
+                    const ox = (Math.random() - 0.5) * 18;
+                    const oy = (Math.random() - 0.5) * 18;
+                    const oz = (Math.random() - 0.5) * 18;
+                    crashParticles.push({
+                        x: FlightModel.position.x + ox,
+                        y: FlightModel.position.y + oy,
+                        z: FlightModel.position.z + oz,
+                        life: 1.2 + Math.random() * 0.8
+                    });
+                    particleVelocities.push({
+                        x: (Math.random() - 0.5) * 90,
+                        y: Math.random() * 60,
+                        z: (Math.random() - 0.5) * 90
+                    });
+                }
+                if (particlePoints) particlePoints.visible = true;
+            }
+
+            function applyObstacleHit(hit) {
+                const o = hit.obstacle;
+                const impact = FlightModel.speed;
+                const fatalHit = o.fatal && (impact > 75 || hit.penetration > 6);
+                const hardHit = impact > 115 || hit.penetration > 10;
+                if (fatalHit || hardHit) {
+                    triggerCrash('Collision: ' + o.label);
+                    return;
+                }
+                GameState.controlPenalty = Math.min(1, GameState.controlPenalty + 0.4);
+                FlightModel.speed = Math.max(FlightModel.minSpeed * 0.5, FlightModel.speed * 0.72);
+                GameState.screenShake = Math.max(GameState.screenShake, 0.55);
+                AudioFX.playScrape();
             }
 
             const ControlState = {
@@ -244,20 +602,46 @@
                 stallSinkRate: 42,
                 
                 update: function(deltaTime) {
+                    if (GameState.crashed) {
+                        this.position.y += Math.sin(Date.now() * 0.004) * 0.15;
+                        return;
+                    }
+
+                    GameState.controlPenalty = damp(GameState.controlPenalty, 0, 2.2, deltaTime);
+                    const controlScale = 1 - GameState.controlPenalty * 0.6;
+
                     this.throttle = clamp(this.throttle + ControlState.throttle * this.throttleRate * deltaTime, 0, 1);
 
                     const speedFloor = this.minSpeed + this.throttle * 18;
                     const targetSpeed = speedFloor + this.throttle * (this.maxSpeed - speedFloor);
                     this.speed = damp(this.speed, targetSpeed, this.speedResponse, deltaTime);
 
-                    const speedControl = clamp((this.speed - this.stallSpeed * 0.65) / this.stallSpeed, 0.25, 1);
+                    const speedControl = clamp((this.speed - this.stallSpeed * 0.65) / this.stallSpeed, 0.25, 1) * controlScale;
                     const pitchCommand = clamp(ControlState.aimY + ControlState.pitch * 0.65, -1, 1);
                     const rollCommand = clamp(-(ControlState.aimX + ControlState.roll * 0.75), -1, 1);
                     const targetPitch = pitchCommand * this.maxPitch * speedControl;
                     const targetRoll = rollCommand * this.maxRoll * speedControl;
 
-                    this.pitch = damp(this.pitch, targetPitch, this.pitchResponse, deltaTime);
-                    this.roll = damp(this.roll, targetRoll, this.rollResponse, deltaTime);
+                    this.pitch = damp(this.pitch, targetPitch, this.pitchResponse * controlScale, deltaTime);
+                    this.roll = damp(this.roll, targetRoll, this.rollResponse * controlScale, deltaTime);
+
+                    let turbPitch = 0;
+                    let turbRoll = 0;
+                    for (let c = 0; c < clouds.length; c++) {
+                        const cloud = clouds[c];
+                        const dx = this.position.x - cloud.position.x;
+                        const dy = this.position.y - cloud.position.y;
+                        const dz = this.position.z - cloud.position.z;
+                        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                        if (dist < 280) {
+                            const amount = (1 - dist / 280) * 0.35;
+                            turbPitch += Math.sin(Date.now() * 0.003 + c) * amount * 0.04;
+                            turbRoll += Math.cos(Date.now() * 0.0025 + c * 1.3) * amount * 0.05;
+                        }
+                    }
+                    this.pitch += turbPitch;
+                    this.roll += turbRoll;
+
                     this.yaw += (this.roll * this.bankTurnRate + ControlState.yaw * this.rudderTurnRate) * speedControl * deltaTime;
 
                     this.rotation.set(this.pitch, this.yaw, this.roll, 'YXZ');
@@ -271,26 +655,66 @@
                     const highAoA = clamp((Math.abs(this.pitch) - 0.55) / 0.45, 0, 1);
                     this.velocity.y -= (stallAmount * this.stallSinkRate + highAoA * (1 - this.throttle) * 22);
 
+                    const prevY = this.position.y;
                     this.position.addScaledVector(this.velocity, deltaTime);
+                    const descentRate = (prevY - this.position.y) / Math.max(deltaTime, 0.001);
 
-                    const groundHeight = Math.max(20, terrainHeight(this.position.x, this.position.z) + 35);
-                    if (this.position.y < groundHeight) {
-                        this.position.y = groundHeight;
-                        this.speed = Math.max(this.minSpeed, this.speed * 0.62);
-                        this.pitch = Math.max(this.pitch, 0.08);
+                    GameState.inWater = this.position.y < WATER_LEVEL + 8;
+                    if (GameState.inWater) {
+                        this.speed = damp(this.speed, this.minSpeed * 0.7, 3.5, deltaTime);
+                        this.velocity.y += 28 * deltaTime;
+                        if (this.position.y < WATER_LEVEL - 2) {
+                            this.position.y = WATER_LEVEL - 2;
+                            if (descentRate > 55) {
+                                triggerCrash('Ditched at high speed');
+                            }
+                        }
+                    }
+
+                    const ground = surfaceHeight(this.position.x, this.position.z);
+                    const agl = getAGL(this.position.x, this.position.y, this.position.z);
+                    if (this.position.y < ground) {
+                        const hardImpact = this.speed > 125 && agl < 25 && descentRate > 35;
+                        if (hardImpact) {
+                            triggerCrash('Terrain impact');
+                        } else {
+                            this.position.y = ground;
+                            this.speed = Math.max(this.minSpeed, this.speed * 0.62);
+                            this.pitch = Math.max(this.pitch, 0.08);
+                            if (this.speed > 90) {
+                                GameState.screenShake = Math.max(GameState.screenShake, 0.35);
+                            }
+                        }
+                    }
+
+                    const hit = CollisionSystem.testSphere(this.position);
+                    if (hit) {
+                        applyObstacleHit(hit);
+                    }
+
+                    if (agl < 100) {
+                        GameState.nearestObstacle = CollisionSystem.findNearest(this.position, 650);
+                    } else {
+                        GameState.nearestObstacle = null;
                     }
                 }
             };
             
-            // Three.js variables
             let scene, camera, renderer, hudCtx;
             let airplane, propeller;
-            let directionalLight;
-            
-            // World objects
+            let directionalLight, ambientLight, hemiLight, skyMaterial, skyUniforms;
+            let waterUniforms, postFX;
+            let terrainMesh = null;
+            let sampleGroundY = null;
             const worldObjects = [];
+            const buildingMeshes = [];
+            const towerMeshes = [];
+            const treeRecords = [];
+            let treeInstances = null;
             const clouds = [];
+            const Gfx = window.SkyVectorGfx;
             const cameraTarget = new THREE.Vector3();
+            const cameraShakeOffset = new THREE.Vector3();
             
             function init() {
                 // Setup Three.js renderer
@@ -309,9 +733,8 @@
                 }
                 if ('toneMapping' in renderer) {
                     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-                    renderer.toneMappingExposure = 0.95;
+                    renderer.toneMappingExposure = 1.0;
                 }
-                
                 // Setup HUD canvas
                 const hudCanvas = document.getElementById('hudCanvas');
                 resizeHudCanvas(hudCanvas);
@@ -320,7 +743,8 @@
                 
                 // Create scene
                 scene = new THREE.Scene();
-                scene.fog = new THREE.Fog(0x9bcfff, 1200, 18000);
+                scene.fog = new THREE.FogExp2(0x9bcfff, 0.00028);
+                scene.background = new THREE.Color(0x9bcfff);
                 
                 // Setup camera
                 camera = new THREE.PerspectiveCamera(
@@ -337,116 +761,117 @@
                 createClouds();
                 createWorldObjects();
                 createAirplane();
+                createCrashParticles();
+                postFX = Gfx.createPostFX(renderer);
+                updateDayNight(0);
                 
-                // Setup controls
                 setupEventListeners();
 
-                // Start render loop
                 requestAnimationFrame(animate);
             }
             
             function createLighting() {
-                // Ambient light
-                const ambientLight = new THREE.AmbientLight(0xd8ecff, 0.45);
+                ambientLight = new THREE.AmbientLight(0xb8c8e8, 0.22);
                 scene.add(ambientLight);
                 
-                // Directional light (sun)
-                directionalLight = new THREE.DirectionalLight(0xfff1cf, 1.1);
-                directionalLight.position.set(250, 650, 320);
+                directionalLight = new THREE.DirectionalLight(0xfff1cf, 1.15);
                 directionalLight.castShadow = true;
-                directionalLight.shadow.camera.left = -900;
-                directionalLight.shadow.camera.right = 900;
-                directionalLight.shadow.camera.top = 900;
-                directionalLight.shadow.camera.bottom = -900;
-                directionalLight.shadow.camera.near = 0.5;
-                directionalLight.shadow.camera.far = 2200;
+                directionalLight.shadow.bias = -0.0004;
+                directionalLight.shadow.normalBias = 0.02;
                 directionalLight.shadow.mapSize.width = 2048;
                 directionalLight.shadow.mapSize.height = 2048;
                 scene.add(directionalLight);
                 scene.add(directionalLight.target);
+                Gfx.updateShadowCamera(directionalLight, new THREE.Vector3(0, 500, 0));
                 
-                // Hemisphere light
-                const hemiLight = new THREE.HemisphereLight(0x9ad7ff, 0x516144, 0.55);
+                hemiLight = new THREE.HemisphereLight(0x9ad7ff, 0x3d4a32, 0.48);
                 scene.add(hemiLight);
+            }
+
+            function updateDayNight(deltaTime) {
+                GameState.timeOfDay = (GameState.timeOfDay + deltaTime * 0.018) % 1;
+                const t = GameState.timeOfDay;
+                const day = Math.max(0, Math.sin(t * Math.PI * 2 - Math.PI * 0.5) * 0.5 + 0.5);
+                const dusk = Math.pow(Math.max(0, 1 - Math.abs(t - 0.25) * 4), 2);
+                const night = 1 - day;
+
+                if (skyUniforms) {
+                    Gfx.updateSkyAndFog({ day, dusk }, skyUniforms, scene, waterUniforms);
+                }
+                if (directionalLight) {
+                    directionalLight.color.setRGB(1, 0.94 - dusk * 0.25, 0.75 - dusk * 0.35);
+                    directionalLight.intensity = 0.4 + day * 0.9;
+                    Gfx.SUN_DIR.set(0.25, 0.35 + day * 0.5, 0.35).normalize();
+                    if (skyUniforms) skyUniforms.sunDirection.value.copy(Gfx.SUN_DIR);
+                    if (waterUniforms) waterUniforms.sunDirection.value.copy(Gfx.SUN_DIR);
+                }
+                if (ambientLight) {
+                    ambientLight.intensity = 0.12 + day * 0.18 + dusk * 0.08;
+                }
+                if (hemiLight) {
+                    hemiLight.intensity = 0.32 + day * 0.28;
+                }
+                if (scene.background) {
+                    scene.background.copy(scene.fog.color);
+                }
+                buildingMeshes.forEach((mesh, i) => {
+                    mesh.material.emissive.setRGB(0.15, 0.18, 0.28);
+                    mesh.material.emissiveIntensity = night * (0.15 + (i % 3) * 0.08);
+                });
+                towerMeshes.forEach((mesh) => {
+                    mesh.material.emissiveIntensity = 0.15 + night * 0.65;
+                });
             }
             
             function createSkybox() {
-                const skyGeometry = new THREE.SphereGeometry(40000, 32, 32);
-                const skyMaterial = new THREE.ShaderMaterial({
-                    uniforms: {
-                        topColor: { value: new THREE.Color(0x1d68d8) },
-                        horizonColor: { value: new THREE.Color(0xcdeeff) },
-                        glowColor: { value: new THREE.Color(0xffe2ad) }
-                    },
-                    vertexShader: `
-                        varying vec3 vWorldPosition;
-                        void main() {
-                            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-                            vWorldPosition = worldPosition.xyz;
-                            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                        }
-                    `,
-                    fragmentShader: `
-                        uniform vec3 topColor;
-                        uniform vec3 horizonColor;
-                        uniform vec3 glowColor;
-                        varying vec3 vWorldPosition;
-                        void main() {
-                            vec3 direction = normalize(vWorldPosition);
-                            float skyMix = smoothstep(-0.1, 0.9, direction.y);
-                            float sunGlow = pow(max(dot(direction, normalize(vec3(0.25, 0.82, 0.35))), 0.0), 14.0);
-                            vec3 color = mix(horizonColor, topColor, skyMix);
-                            color = mix(color, glowColor, sunGlow * 0.45);
-                            gl_FragColor = vec4(color, 1.0);
-                        }
-                    `,
-                    side: THREE.BackSide,
-                    depthWrite: false
-                });
-                const sky = new THREE.Mesh(skyGeometry, skyMaterial);
-                scene.add(sky);
+                const sky = Gfx.createSkyMesh(scene);
+                skyMaterial = sky.material;
+                skyUniforms = sky.uniforms;
             }
             
             function createTerrain() {
-                // Create large terrain with height variation
-                const terrainSize = 10000;
-                const segments = 200;
-                const terrainGeometry = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
-                
-                // Add height variation
-                const vertices = terrainGeometry.attributes.position.array;
-                for (let i = 0; i < vertices.length; i += 3) {
-                    const x = vertices[i];
-                    const z = vertices[i + 1];
-                    vertices[i + 2] = terrainHeight(x, z);
-                }
-                
-                terrainGeometry.computeVertexNormals();
-                
-                const terrainMaterial = new THREE.MeshPhongMaterial({
-                    color: 0x4f8d4b,
-                    shininess: 12,
-                    specular: 0x163515
+                terrainMesh = Gfx.createTerrainMesh(scene, terrainHeight, WATER_SURFACE);
+                terrainMesh.updateMatrixWorld(true);
+                sampleGroundY = Gfx.createGroundSampler(terrainMesh);
+                const water = Gfx.createWaterMesh(scene, WATER_SURFACE, 10000);
+                waterUniforms = water.uniforms;
+            }
+
+            function createRunways() {
+                const runwayMaterial = Gfx.stdMaterial({ color: 0x3a3f46, roughness: 0.88, metalness: 0.05 });
+                const stripeMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xe8ecef,
+                    roughness: 0.6,
+                    metalness: 0.2,
+                    emissive: 0x222222,
+                    emissiveIntensity: 0.05
                 });
-                
-                const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
-                terrain.rotation.x = -Math.PI / 2;
-                terrain.receiveShadow = true;
-                scene.add(terrain);
-                
-                // Add water at sea level
-                const waterGeometry = new THREE.PlaneGeometry(terrainSize * 2, terrainSize * 2);
-                const waterMaterial = new THREE.MeshPhongMaterial({
-                    color: 0x0d78a5,
-                    transparent: true,
-                    opacity: 0.72,
-                    shininess: 140,
-                    specular: 0x8fdcff
+                const pads = [
+                    { x: 420, z: 380, length: 420, width: 48, heading: 0.15 },
+                    { x: 2500, z: -1500, length: 360, width: 42, heading: 0.35 }
+                ];
+                pads.forEach((pad) => {
+                    if (!isAboveWater(pad.x, pad.z) || runwayOverlapsCity(pad)) return;
+                    const groundY = propGroundHeight(pad.x, pad.z, pad.width * 0.5, pad.length * 0.5);
+                    const runway = new THREE.Mesh(
+                        new THREE.BoxGeometry(pad.length, 1.2, pad.width),
+                        runwayMaterial
+                    );
+                    runway.position.set(pad.x, groundY + 0.6, pad.z);
+                    runway.rotation.y = pad.heading;
+                    runway.receiveShadow = true;
+                    scene.add(runway);
+                    worldObjects.push(runway);
+
+                    const stripe = new THREE.Mesh(
+                        new THREE.BoxGeometry(pad.length * 0.55, 1.4, 3),
+                        stripeMaterial
+                    );
+                    stripe.position.set(pad.x, groundY + 0.7, pad.z);
+                    stripe.rotation.y = pad.heading;
+                    scene.add(stripe);
+                    CollisionSystem.addMapMarker(pad.x, pad.z, 'runway');
                 });
-                const water = new THREE.Mesh(waterGeometry, waterMaterial);
-                water.rotation.x = -Math.PI / 2;
-                water.position.y = -10;
-                scene.add(water);
             }
             
             function createClouds() {
@@ -462,10 +887,12 @@
                             8,
                             6
                         );
-                        const cloudPartMaterial = new THREE.MeshPhongMaterial({
+                        const cloudPartMaterial = new THREE.MeshStandardMaterial({
                             color: 0xffffff,
                             transparent: true,
-                            opacity: 0.58,
+                            opacity: 0.52,
+                            roughness: 1,
+                            metalness: 0,
                             depthWrite: false
                         });
                         const cloudPart = new THREE.Mesh(cloudPartGeometry, cloudPartMaterial);
@@ -491,74 +918,156 @@
             }
             
             function createWorldObjects() {
-                // Create buildings/landmarks
-                const buildingMaterial = new THREE.MeshPhongMaterial({ color: 0x8a8f9a, shininess: 55 });
-                
-                // Create city area
+                CollisionSystem.clear();
+                buildingMeshes.length = 0;
+                towerMeshes.length = 0;
+                treeRecords.length = 0;
+                const buildingMaterial = Gfx.stdMaterial({ color: 0x8a8f9a, roughness: 0.55, metalness: 0.25 });
+                const buildingAccent = Gfx.stdMaterial({ color: 0x6a7588, roughness: 0.5, metalness: 0.35 });
+
                 for (let i = 0; i < 64; i++) {
                     const row = Math.floor(i / 8);
                     const col = i % 8;
+                    const bx = CITY_ORIGIN.x + col * 115;
+                    const bz = CITY_ORIGIN.z + row * 115;
+                    if (!isAboveWater(bx, bz)) continue;
                     const buildingHeight = 55 + ((i * 37) % 170);
-                    const buildingGeometry = new THREE.BoxGeometry(
-                        32 + (i % 3) * 16,
-                        buildingHeight,
-                        32 + (row % 3) * 14
+                    const hx = (32 + (i % 3) * 16) * 0.5;
+                    const hz = (32 + (row % 3) * 14) * 0.5;
+                    const groundY = propGroundHeight(bx, bz, hx, hz, true);
+                    const building = new THREE.Mesh(
+                        new THREE.BoxGeometry(hx * 2, buildingHeight, hz * 2),
+                        (i % 3 === 0) ? buildingAccent : buildingMaterial
                     );
-                    const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
-                    building.position.set(
-                        -1450 + col * 115,
-                        buildingHeight / 2,
-                        -1550 + row * 115
-                    );
+                    building.position.set(bx, groundY + buildingHeight * 0.5, bz);
                     building.castShadow = true;
                     building.receiveShadow = true;
                     worldObjects.push(building);
+                    buildingMeshes.push(building);
                     scene.add(building);
+                    CollisionSystem.registerBox(bx, groundY + buildingHeight * 0.5, bz, hx, buildingHeight * 0.5, hz, {
+                        label: 'building',
+                        fatal: true
+                    });
                 }
-                
-                // Create some towers
+                CollisionSystem.addMapMarker(CITY_CENTER.x, CITY_CENTER.z, 'city');
+
                 for (let i = 0; i < 8; i++) {
                     const towerGeometry = new THREE.CylinderGeometry(20, 30, 300, 8);
-                    const towerMaterial = new THREE.MeshPhongMaterial({ 
-                        color: 0xff0000,
-                        emissive: 0xff0000,
+                    const towerMaterial = Gfx.stdMaterial({
+                        color: 0xcc2222,
+                        roughness: 0.45,
+                        metalness: 0.15,
+                        emissive: 0xff3333,
                         emissiveIntensity: 0.2
                     });
-                    const tower = new THREE.Mesh(towerGeometry, towerMaterial);
                     const angle = i / 8 * Math.PI * 2;
-                    tower.position.set(
-                        Math.cos(angle) * 2600,
-                        150,
-                        Math.sin(angle) * 2600
-                    );
+                    const tx = Math.cos(angle) * 2600;
+                    const tz = Math.sin(angle) * 2600;
+                    if (!isAboveWater(tx, tz)) continue;
+                    const groundY = propGroundHeight(tx, tz, 35, 35);
+                    const tower = new THREE.Mesh(towerGeometry, towerMaterial);
+                    tower.position.set(tx, groundY + 150, tz);
                     tower.castShadow = true;
                     worldObjects.push(tower);
+                    towerMeshes.push(tower);
                     scene.add(tower);
+                    CollisionSystem.registerCylinder(tx, groundY + 150, tz, 32, 300, { label: 'tower', fatal: true });
+                    CollisionSystem.addMapMarker(tx, tz, 'tower');
                 }
-                
-                // Create mountains
+
                 for (let i = 0; i < 14; i++) {
                     const radius = 260 + (i % 5) * 70;
                     const height = 420 + (i % 4) * 115;
-                    const mountainGeometry = new THREE.ConeGeometry(
-                        radius,
-                        height,
-                        8
-                    );
-                    const mountainMaterial = new THREE.MeshLambertMaterial({ 
-                        color: 0x654321 
-                    });
-                    const mountain = new THREE.Mesh(mountainGeometry, mountainMaterial);
                     const angle = i / 14 * Math.PI * 2 + 0.35;
-                    mountain.position.set(
-                        Math.cos(angle) * 4300,
-                        height / 2 - 15,
-                        Math.sin(angle) * 4300
+                    const mx = Math.cos(angle) * 4300;
+                    const mz = Math.sin(angle) * 4300;
+                    const groundY = propGroundHeight(mx, mz, radius * 0.7, radius * 0.7);
+                    const mountainGeo = new THREE.ConeGeometry(radius, height, 10);
+                    Gfx.paintMountainColors(mountainGeo, new THREE.Color(0x5a4635), height);
+                    const mountain = new THREE.Mesh(
+                        mountainGeo,
+                        Gfx.stdMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.92, metalness: 0 })
                     );
+                    mountain.position.set(mx, groundY + height * 0.5, mz);
                     mountain.castShadow = true;
                     worldObjects.push(mountain);
                     scene.add(mountain);
+                    CollisionSystem.registerCylinder(mx, groundY + height * 0.45, mz, radius * 0.85, height * 0.9, {
+                        label: 'mountain',
+                        fatal: true
+                    });
+                    CollisionSystem.addMapMarker(mx, mz, 'mountain');
                 }
+
+                let treesPlaced = 0;
+                for (let attempt = 0; attempt < 800 && treesPlaced < 160; attempt++) {
+                    const cluster = seededNoise(attempt * 0.31, attempt * 0.17);
+                    const tx = (Math.abs(seededNoise(attempt, 1)) - 0.5) * 7600 + (cluster - 0.5) * 400;
+                    const tz = (Math.abs(seededNoise(attempt, 2)) - 0.5) * 7600 + (seededNoise(attempt, 3) - 0.5) * 400;
+                    if (horizontalDist(tx, tz, CITY_CENTER.x, CITY_CENTER.z) < 950) continue;
+                    const groundY = propGroundHeight(tx, tz, 8, 8);
+                    if (!isAboveWater(tx, tz) || groundY > 120) continue;
+                    const treeH = 22 + (treesPlaced % 7) * 4;
+                    const trunkH = treeH * 0.45;
+                    const crownH = treeH * 0.65;
+                    const crownR = 7 + (treesPlaced % 3) * 2;
+                    treeRecords.push({ x: tx, z: tz, groundY, trunkH, crownH, crownR });
+                    const totalH = trunkH + crownH;
+                    CollisionSystem.registerCylinder(tx, groundY + totalH * 0.5, tz, 8, totalH, {
+                        label: 'tree',
+                        fatal: false
+                    });
+                    treesPlaced++;
+                }
+                treeInstances = Gfx.buildTreeInstances(scene, treeRecords);
+                createRunways();
+                Gfx.createRoads(scene, propGroundHeight, [
+                    { x: CITY_CENTER.x, z: CITY_CENTER.z },
+                    { x: 420, z: 380 },
+                    { x: CITY_CENTER.x, z: CITY_CENTER.z },
+                    { x: 2500, z: -1500 }
+                ]);
+            }
+
+            function createCrashParticles() {
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+                const material = new THREE.PointsMaterial({
+                    color: 0xffaa44,
+                    size: 6,
+                    transparent: true,
+                    opacity: 0.85,
+                    depthWrite: false
+                });
+                particlePoints = new THREE.Points(geometry, material);
+                particlePoints.visible = false;
+                scene.add(particlePoints);
+            }
+
+            function updateCrashParticles(deltaTime) {
+                if (!particlePoints || crashParticles.length === 0) return;
+                let write = 0;
+                for (let i = 0; i < crashParticles.length; i++) {
+                    const p = crashParticles[i];
+                    const v = particleVelocities[i];
+                    p.x += v.x * deltaTime;
+                    p.y += v.y * deltaTime;
+                    p.z += v.z * deltaTime;
+                    v.y -= 35 * deltaTime;
+                    p.life -= deltaTime;
+                    if (p.life <= 0) continue;
+                    particlePositions[write * 3] = p.x;
+                    particlePositions[write * 3 + 1] = p.y;
+                    particlePositions[write * 3 + 2] = p.z;
+                    crashParticles[write] = p;
+                    particleVelocities[write] = v;
+                    write++;
+                }
+                crashParticles.length = write;
+                particleVelocities.length = write;
+                particlePoints.geometry.attributes.position.needsUpdate = true;
+                if (write === 0) particlePoints.visible = false;
             }
             
             function createAirplane() {
@@ -566,9 +1075,10 @@
                 
                 // Fuselage
                 const fuselageGeometry = new THREE.CylinderGeometry(1, 2, 15, 8);
-                const fuselageMaterial = new THREE.MeshPhongMaterial({ 
+                const fuselageMaterial = Gfx.stdMaterial({
                     color: 0x0066cc,
-                    shininess: 100
+                    roughness: 0.35,
+                    metalness: 0.4
                 });
                 const fuselage = new THREE.Mesh(fuselageGeometry, fuselageMaterial);
                 fuselage.rotation.x = Math.PI / 2;
@@ -577,7 +1087,7 @@
                 
                 // Wings
                 const wingGeometry = new THREE.BoxGeometry(40, 0.5, 6);
-                const wingMaterial = new THREE.MeshPhongMaterial({ color: 0x0066cc });
+                const wingMaterial = Gfx.stdMaterial({ color: 0x0066cc, roughness: 0.4, metalness: 0.35 });
                 const wings = new THREE.Mesh(wingGeometry, wingMaterial);
                 wings.castShadow = true;
                 airplane.add(wings);
@@ -597,7 +1107,7 @@
                 // Engine nacelles
                 for (let i = 0; i < 2; i++) {
                     const engineGeometry = new THREE.CylinderGeometry(1.5, 1.2, 4, 8);
-                    const engineMaterial = new THREE.MeshPhongMaterial({ color: 0x333333 });
+                    const engineMaterial = Gfx.stdMaterial({ color: 0x333333, roughness: 0.55, metalness: 0.6 });
                     const engine = new THREE.Mesh(engineGeometry, engineMaterial);
                     engine.rotation.x = Math.PI / 2;
                     engine.position.set(i === 0 ? 5 : -5, -0.5, -2);
@@ -606,8 +1116,10 @@
                 
                 // Propeller
                 const propellerGeometry = new THREE.BoxGeometry(0.5, 8, 1);
-                const propellerMaterial = new THREE.MeshPhongMaterial({
+                const propellerMaterial = new THREE.MeshStandardMaterial({
                     color: 0x222222,
+                    roughness: 0.5,
+                    metalness: 0.5,
                     transparent: true,
                     opacity: 0.78
                 });
@@ -617,9 +1129,10 @@
                 
                 // Cockpit windows
                 const cockpitGeometry = new THREE.BoxGeometry(3, 2, 3);
-                const cockpitMaterial = new THREE.MeshPhongMaterial({ 
+                const cockpitMaterial = Gfx.stdMaterial({
                     color: 0x111111,
-                    shininess: 200
+                    roughness: 0.15,
+                    metalness: 0.85
                 });
                 const cockpit = new THREE.Mesh(cockpitGeometry, cockpitMaterial);
                 cockpit.position.set(0, 1, -3);
@@ -637,10 +1150,24 @@
             }
             
             function updateCamera(deltaTime) {
+                GameState.screenShake = damp(GameState.screenShake, 0, 8, deltaTime);
+                GameState.crashFlash = damp(GameState.crashFlash, 0, 3.5, deltaTime);
+                const shake = GameState.screenShake;
+                if (shake > 0.01) {
+                    cameraShakeOffset.set(
+                        (Math.random() - 0.5) * shake * 4,
+                        (Math.random() - 0.5) * shake * 3,
+                        (Math.random() - 0.5) * shake * 4
+                    );
+                } else {
+                    cameraShakeOffset.set(0, 0, 0);
+                }
+
                 if (GameState.viewMode === 'cockpit') {
                     const cockpitPosition = FlightModel.position.clone()
                         .addScaledVector(FlightModel.up, 2.8)
-                        .addScaledVector(FlightModel.forward, 4.5);
+                        .addScaledVector(FlightModel.forward, 4.5)
+                        .add(cameraShakeOffset);
                     const lookAt = cockpitPosition.clone()
                         .addScaledVector(FlightModel.forward, 180)
                         .addScaledVector(FlightModel.up, ControlState.aimY * 10);
@@ -652,7 +1179,8 @@
                     const idealPosition = FlightModel.position.clone()
                         .addScaledVector(FlightModel.forward, -62)
                         .addScaledVector(FlightModel.up, 18)
-                        .addScaledVector(FlightModel.right, -FlightModel.roll * 9);
+                        .addScaledVector(FlightModel.right, -FlightModel.roll * 9)
+                        .add(cameraShakeOffset);
                     const lookAtPosition = FlightModel.position.clone()
                         .addScaledVector(FlightModel.forward, 52)
                         .addScaledVector(FlightModel.up, 8);
@@ -683,15 +1211,25 @@
                 const width = window.innerWidth;
                 const height = window.innerHeight;
                 hudCtx.clearRect(0, 0, width, height);
-                
+
                 if (!GameState.isPlaying) return;
-                
-                // HUD styling
+
+                if (GameState.crashFlash > 0.05) {
+                    hudCtx.fillStyle = `rgba(220, 30, 30, ${GameState.crashFlash * 0.45})`;
+                    hudCtx.fillRect(0, 0, width, height);
+                }
+
+                const agl = getAGL(
+                    FlightModel.position.x,
+                    FlightModel.position.y,
+                    FlightModel.position.z
+                );
+                const headingDeg = ((FlightModel.yaw * 180 / Math.PI) % 360 + 360) % 360;
+
                 hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
                 hudCtx.strokeStyle = '#00ff00';
                 hudCtx.lineWidth = 2;
-                
-                // Speed indicator
+
                 hudCtx.fillRect(20, 20, 200, 60);
                 hudCtx.strokeRect(20, 20, 200, 60);
                 hudCtx.fillStyle = '#00ff00';
@@ -699,18 +1237,16 @@
                 hudCtx.fillText('SPEED', 30, 45);
                 hudCtx.font = 'bold 24px monospace';
                 hudCtx.fillText(`${Math.round(FlightModel.speed)} u/s`, 30, 70);
-                
-                // Altitude
+
                 hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
                 hudCtx.fillRect(20, 90, 200, 60);
                 hudCtx.strokeRect(20, 90, 200, 60);
                 hudCtx.fillStyle = '#00ff00';
                 hudCtx.font = 'bold 18px monospace';
-                hudCtx.fillText('ALTITUDE', 30, 115);
+                hudCtx.fillText('ALT / AGL', 30, 115);
                 hudCtx.font = 'bold 24px monospace';
-                hudCtx.fillText(`${Math.round(FlightModel.position.y)} m`, 30, 140);
-                
-                // Throttle
+                hudCtx.fillText(`${Math.round(FlightModel.position.y)} / ${Math.round(agl)} m`, 30, 140);
+
                 hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
                 hudCtx.fillRect(20, 160, 200, 60);
                 hudCtx.strokeRect(20, 160, 200, 60);
@@ -719,18 +1255,22 @@
                 hudCtx.fillText('THROTTLE', 30, 185);
                 hudCtx.fillRect(30, 195, FlightModel.throttle * 180, 20);
                 hudCtx.strokeRect(30, 195, 180, 20);
-                
-                // View mode indicator
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = '16px monospace';
-                hudCtx.fillText(`View: ${GameState.viewMode.toUpperCase()} (V)`, 20, height - 44);
-                hudCtx.fillText('Mouse aim | WASD/arrows pitch/roll | Shift/Ctrl throttle | R reset', 20, height - 20);
-                
+
+                drawAttitudePanel(20, 230, 200, 168, FlightModel.pitch, FlightModel.roll);
+                drawCompass(width / 2, 58, headingDeg);
+                drawMiniMap(width - 165, 24, 140);
+
+                if (GameState.inWater) {
+                    hudCtx.fillStyle = 'rgba(0, 120, 200, 0.75)';
+                    hudCtx.font = 'bold 22px monospace';
+                    hudCtx.fillText('WATER', 30, 430);
+                }
+
                 const centerX = width / 2;
                 const centerY = height / 2;
+
                 const aimX = centerX + ControlState.aimX * 170;
                 const aimY = centerY - ControlState.aimY * 110;
-
                 hudCtx.strokeStyle = 'rgba(0, 255, 100, 0.85)';
                 hudCtx.lineWidth = 2;
                 hudCtx.beginPath();
@@ -747,24 +1287,153 @@
                 hudCtx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
                 hudCtx.beginPath();
                 hudCtx.arc(aimX, aimY, 16, 0, Math.PI * 2);
-                hudCtx.moveTo(aimX - 28, aimY);
-                hudCtx.lineTo(aimX - 18, aimY);
-                hudCtx.moveTo(aimX + 18, aimY);
-                hudCtx.lineTo(aimX + 28, aimY);
-                hudCtx.moveTo(aimX, aimY - 28);
-                hudCtx.lineTo(aimX, aimY - 18);
-                hudCtx.moveTo(aimX, aimY + 18);
-                hudCtx.lineTo(aimX, aimY + 28);
                 hudCtx.stroke();
-                
-                // Stall warning
-                if (FlightModel.speed < FlightModel.stallSpeed && FlightModel.position.y > 100) {
+
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = '16px monospace';
+                hudCtx.fillText(`View: ${GameState.viewMode.toUpperCase()} (V)`, 20, height - 44);
+                hudCtx.fillText('Mouse aim | WASD | Shift/Ctrl throttle | R reset / recover', 20, height - 20);
+
+                if (agl < 50 && !GameState.crashed) {
+                    hudCtx.fillStyle = 'rgba(255, 180, 0, 0.9)';
+                    hudCtx.font = 'bold 32px monospace';
+                    hudCtx.fillText('TERRAIN', width / 2 - 72, height / 2 - 100);
+                }
+
+                if (GameState.nearestObstacle && agl < 100 && !GameState.crashed) {
+                    hudCtx.fillStyle = 'rgba(255, 220, 80, 0.9)';
+                    hudCtx.font = 'bold 18px monospace';
+                    const label = GameState.nearestObstacle.obstacle.label.toUpperCase();
+                    hudCtx.fillText(
+                        `${label} ${Math.round(GameState.nearestObstacle.distance)}m`,
+                        width / 2 - 80,
+                        height / 2 - 130
+                    );
+                }
+
+                if (GameState.crashed) {
+                    hudCtx.fillStyle = 'rgba(255, 40, 40, 0.92)';
+                    hudCtx.font = 'bold 44px monospace';
+                    hudCtx.fillText('CRASH', width / 2 - 72, height / 2 - 20);
+                    hudCtx.font = 'bold 20px monospace';
+                    hudCtx.fillText(GameState.crashMessage, width / 2 - 160, height / 2 + 20);
+                    hudCtx.fillText('Press R to reset', width / 2 - 110, height / 2 + 52);
+                } else if (FlightModel.speed < FlightModel.stallSpeed && agl > 80) {
                     hudCtx.fillStyle = 'rgba(255, 0, 0, 0.8)';
                     hudCtx.font = 'bold 48px monospace';
-                    hudCtx.fillText('STALL WARNING', 
-                        width / 2 - 180,
-                        height / 2 - 70);
+                    hudCtx.fillText('STALL WARNING', width / 2 - 180, height / 2 - 70);
                 }
+            }
+
+            function drawAttitudePanel(panelX, panelY, panelW, panelH, pitch, roll) {
+                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                hudCtx.fillRect(panelX, panelY, panelW, panelH);
+                hudCtx.strokeStyle = '#00ff00';
+                hudCtx.lineWidth = 2;
+                hudCtx.strokeRect(panelX, panelY, panelW, panelH);
+
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = 'bold 18px monospace';
+                hudCtx.fillText('ATTITUDE', panelX + 10, panelY + 24);
+
+                const cx = panelX + panelW * 0.5;
+                const cy = panelY + panelH * 0.52;
+                const size = 68;
+
+                hudCtx.save();
+                hudCtx.beginPath();
+                hudCtx.arc(cx, cy, size, 0, Math.PI * 2);
+                hudCtx.clip();
+                hudCtx.translate(cx, cy);
+                hudCtx.rotate(-roll);
+                const pitchOffset = pitch * 85;
+                hudCtx.fillStyle = 'rgba(80, 140, 220, 0.7)';
+                hudCtx.fillRect(-size, -size + pitchOffset, size * 2, size - pitchOffset);
+                hudCtx.fillStyle = 'rgba(90, 70, 40, 0.7)';
+                hudCtx.fillRect(-size, pitchOffset, size * 2, size - pitchOffset);
+                hudCtx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+                hudCtx.lineWidth = 2;
+                hudCtx.beginPath();
+                hudCtx.moveTo(-size * 0.55, pitchOffset);
+                hudCtx.lineTo(size * 0.55, pitchOffset);
+                hudCtx.stroke();
+                hudCtx.restore();
+
+                hudCtx.strokeStyle = '#00ff88';
+                hudCtx.lineWidth = 2;
+                hudCtx.beginPath();
+                hudCtx.arc(cx, cy, size, 0, Math.PI * 2);
+                hudCtx.stroke();
+
+                hudCtx.strokeStyle = 'rgba(255, 80, 80, 0.95)';
+                hudCtx.lineWidth = 2;
+                hudCtx.beginPath();
+                hudCtx.moveTo(cx - 22, cy);
+                hudCtx.lineTo(cx - 8, cy);
+                hudCtx.moveTo(cx + 8, cy);
+                hudCtx.lineTo(cx + 22, cy);
+                hudCtx.moveTo(cx, cy - 8);
+                hudCtx.lineTo(cx, cy + 8);
+                hudCtx.stroke();
+            }
+
+            function drawCompass(cx, cy, headingDeg) {
+                const r = 36;
+                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                hudCtx.beginPath();
+                hudCtx.arc(cx, cy, r + 8, 0, Math.PI * 2);
+                hudCtx.fill();
+                hudCtx.strokeStyle = '#00ff00';
+                hudCtx.lineWidth = 2;
+                hudCtx.stroke();
+                hudCtx.save();
+                hudCtx.translate(cx, cy);
+                hudCtx.rotate(-headingDeg * Math.PI / 180);
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = '12px monospace';
+                hudCtx.fillText('N', -4, -r + 4);
+                hudCtx.fillText('E', r - 10, 4);
+                hudCtx.fillText('S', -4, r - 2);
+                hudCtx.fillText('W', -r + 2, 4);
+                hudCtx.restore();
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = 'bold 16px monospace';
+                hudCtx.fillText(
+                    `HDG ${Math.round(headingDeg).toString().padStart(3, '0')}°`,
+                    cx - 36,
+                    cy + r + 22
+                );
+            }
+
+            function drawMiniMap(x, y, size) {
+                const scale = size / 10000;
+                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                hudCtx.fillRect(x, y, size, size);
+                hudCtx.strokeStyle = '#00ff00';
+                hudCtx.strokeRect(x, y, size, size);
+                const px = FlightModel.position.x;
+                const pz = FlightModel.position.z;
+                const markerColors = {
+                    city: '#ffee88',
+                    tower: '#ff4444',
+                    mountain: '#aa7744',
+                    runway: '#cccccc'
+                };
+                CollisionSystem.mapMarkers.forEach((m) => {
+                    const mx = x + (m.x + 5000) * scale;
+                    const mz = y + (m.z + 5000) * scale;
+                    hudCtx.fillStyle = markerColors[m.kind] || '#88ff88';
+                    hudCtx.fillRect(mx - 2, mz - 2, 4, 4);
+                });
+                const playerX = x + (px + 5000) * scale;
+                const playerZ = y + (pz + 5000) * scale;
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.beginPath();
+                hudCtx.arc(playerX, playerZ, 4, 0, Math.PI * 2);
+                hudCtx.fill();
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = '11px monospace';
+                hudCtx.fillText('MAP', x + 4, y + 12);
             }
             
             function setupEventListeners() {
@@ -784,6 +1453,13 @@
                 }
                 
                 if (!GameState.isPlaying) return;
+
+                if (GameState.crashed) {
+                    if (event.code === 'KeyR' && !event.repeat) {
+                        resetPlane();
+                    }
+                    return;
+                }
 
                 if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
                     event.preventDefault();
@@ -886,6 +1562,12 @@
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
+                if (postFX) {
+                    postFX.resize(
+                        Math.floor(window.innerWidth * renderer.getPixelRatio()),
+                        Math.floor(window.innerHeight * renderer.getPixelRatio())
+                    );
+                }
                 
                 const hudCanvas = document.getElementById('hudCanvas');
                 resizeHudCanvas(hudCanvas);
@@ -896,10 +1578,13 @@
                 GameState.isPlaying = true;
                 GameState.startTime = Date.now();
                 centerPointerAim();
+                AudioFX.init();
+                AudioFX.resume();
                 resetPlane();
             }
             
             function resetPlane() {
+                clearCrashState();
                 FlightModel.position.set(0, 500, 0);
                 FlightModel.velocity.set(0, 0, 0);
                 FlightModel.pitch = 0;
@@ -921,19 +1606,40 @@
             }
             
             let lastTime = 0;
+            let wasInWater = false;
             function animate(currentTime) {
                 requestAnimationFrame(animate);
                 
                 if (!lastTime) {
                     lastTime = currentTime;
                 }
-                const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1); // Cap at 100ms
+                const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1);
                 lastTime = currentTime;
                 
                 if (GameState.isPlaying && deltaTime > 0) {
+                    updateDayNight(deltaTime);
                     FlightModel.update(deltaTime);
                     updateAirplane();
                     updateCamera(deltaTime);
+                    updateCrashParticles(deltaTime);
+
+                    if (GameState.inWater && !wasInWater) {
+                        AudioFX.playSplash();
+                    }
+                    wasInWater = GameState.inWater;
+
+                    AudioFX.update(
+                        FlightModel.throttle,
+                        FlightModel.speed,
+                        FlightModel.maxSpeed,
+                        FlightModel.speed < FlightModel.stallSpeed && getAGL(
+                            FlightModel.position.x,
+                            FlightModel.position.y,
+                            FlightModel.position.z
+                        ) > 80,
+                        GameState.crashed,
+                        GameState.inWater
+                    );
 
                     clouds.forEach((cloud) => {
                         cloud.position.x += cloud.userData.drift * deltaTime;
@@ -942,18 +1648,19 @@
                         }
                     });
                     
-                    // Update sun position based on plane
-                    directionalLight.position.set(
-                        FlightModel.position.x + 200,
-                        500,
-                        FlightModel.position.z + 200
-                    );
-                    directionalLight.target.position.copy(FlightModel.position);
-                    directionalLight.target.updateMatrixWorld();
+                    Gfx.updateShadowCamera(directionalLight, FlightModel.position);
+                    if (waterUniforms) {
+                        waterUniforms.time.value += deltaTime;
+                    }
+                    Gfx.updateCloudsForCamera(clouds, camera.position);
                 }
                 
                 drawHUD();
-                renderer.render(scene, camera);
+                if (postFX) {
+                    postFX.render(renderer, scene, camera);
+                } else {
+                    renderer.render(scene, camera);
+                }
             }
             
             // Initialize everything

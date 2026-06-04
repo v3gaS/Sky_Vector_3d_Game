@@ -14,8 +14,9 @@ const FRAMES_DIR = path.join(ROOT, 'docs', 'assets', 'frames');
 const GIF_PATH = path.join(ROOT, 'docs', 'assets', 'gameplay.gif');
 const DEFAULT_PORT = 0;
 const VIEWPORT = { width: 960, height: 540 };
-const FRAME_COUNT = 48;
-const FRAME_INTERVAL_MS = 120;
+const FRAME_COUNT = 52;
+const FRAME_INTERVAL_MS = 110;
+const NAV_TIMEOUT_MS = 120000;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -50,18 +51,22 @@ function serverPort(server) {
 
 async function flyDemo(page) {
   await page.keyboard.press('Space');
-  await page.waitForTimeout(400);
-  await page.mouse.move(620, 280);
+  await page.waitForTimeout(800);
+  await page.mouse.move(640, 270);
   await page.keyboard.down('Shift');
   await page.keyboard.down('KeyD');
-  await page.waitForTimeout(1800);
-  await page.mouse.move(340, 320);
+  await page.waitForTimeout(2200);
+  await page.mouse.move(360, 300);
   await page.keyboard.up('KeyD');
   await page.keyboard.down('KeyW');
-  await page.waitForTimeout(1400);
+  await page.waitForTimeout(1600);
   await page.keyboard.up('KeyW');
+  await page.keyboard.down('KeyQ');
+  await page.waitForTimeout(900);
+  await page.keyboard.up('KeyQ');
   await page.keyboard.up('Shift');
-  await page.mouse.move(480, 260);
+  await page.mouse.move(480, 255);
+  await page.waitForTimeout(400);
 }
 
 async function captureFrames(page) {
@@ -114,8 +119,11 @@ async function main() {
   const page = await browser.newPage({ viewport: VIEWPORT });
 
   try {
-    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load' });
-    await page.waitForSelector('.start-prompt', { state: 'visible', timeout: 15000 });
+    await page.goto(`http://127.0.0.1:${port}/`, {
+      waitUntil: 'load',
+      timeout: NAV_TIMEOUT_MS,
+    });
+    await page.waitForSelector('.start-prompt', { state: 'visible', timeout: 60000 });
     await flyDemo(page);
     await captureFrames(page);
     buildGif();

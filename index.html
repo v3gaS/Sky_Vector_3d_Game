@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="SkyVector — browser-based 3D flight simulator built with Three.js. Fly over procedural terrain with arcade controls.">
+    <title>SkyVector — 3D Flight Simulator</title>
+    <style>
+        /* SkyVector — browser-based 3D flight simulator */
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            background: #000;
+        }
+        
+        #gameCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #hudCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        #startScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            z-index: 10;
+        }
+        
+        #startScreen h1 {
+            font-size: 72px;
+            margin-bottom: 20px;
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.5);
+            letter-spacing: 4px;
+        }
+        
+        #startScreen .subtitle {
+            font-size: 24px;
+            margin-bottom: 40px;
+            opacity: 0.9;
+        }
+        
+        #startScreen .controls {
+            background: rgba(0,0,0,0.3);
+            padding: 20px 40px;
+            border-radius: 10px;
+            max-width: 600px;
+            text-align: center;
+        }
+        
+        #startScreen .controls h3 {
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        
+        #startScreen .controls p {
+            margin: 8px 0;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        
+        #startScreen .start-prompt {
+            margin-top: 30px;
+            font-size: 28px;
+            animation: pulse 2s ease-in-out infinite;
+            cursor: pointer;
+        }
+        
+        #startScreen .start-prompt:hover {
+            transform: scale(1.1);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 0.7; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.05); }
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        #loadingMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="loadingMessage">Loading Three.js...</div>
+    <canvas id="gameCanvas"></canvas>
+    <canvas id="hudCanvas"></canvas>
+    
+    <div id="startScreen" class="hidden">
+        <h1>SkyVector</h1>
+        <div class="subtitle">Advanced 3D Flight Simulator</div>
+        <div class="controls">
+            <h3>Flight Controls</h3>
+            <p><strong>Mouse</strong> - Aim the plane</p>
+            <p><strong>W/S or ↑/↓</strong> - Pitch assist</p>
+            <p><strong>A/D or ←/→</strong> - Roll assist</p>
+            <p><strong>Q/E</strong> - Yaw (rudder)</p>
+            <p><strong>Shift</strong> - Increase throttle</p>
+            <p><strong>Control</strong> - Decrease throttle</p>
+            <p><strong>V</strong> - Toggle view (Cockpit/External)</p>
+            <p><strong>R</strong> - Reset position</p>
+        </div>
+        <div class="start-prompt">Press SPACE or CLICK here to fly</div>
+    </div>
+    
+    <!-- Load Three.js using the standalone build -->
+    <script src="vendor/three.js"></script>
+    
+    <script>
+        // Simple loading check
+        window.addEventListener('load', function() {
+            // Hide loading message
+            document.getElementById('loadingMessage').style.display = 'none';
+            
+            // Check if Three.js loaded
+            if (typeof THREE === 'undefined') {
+                document.getElementById('startScreen').innerHTML = `
+                    <h1>SkyVector</h1>
+                    <div style="background: rgba(255,0,0,0.2); padding: 20px; border-radius: 10px;">
+                        <h3>Error: Unable to load Three.js</h3>
+                        <p>Please ensure you're running a local web server:</p>
+                        <code>python3 -m http.server 8000</code>
+                        <p>Then open: <code>http://localhost:8000/</code></p>
+                    </div>
+                `;
+                document.getElementById('startScreen').classList.remove('hidden');
+                return;
+            }
+            
+            // Show start screen
+            document.getElementById('startScreen').classList.remove('hidden');
+            
+            // Initialize the game
+            initializeGame();
+        });
+        
+        function initializeGame() {
+            // Game state
+            const GameState = {
+                isPlaying: false,
+                viewMode: 'external', // 'cockpit' or 'external'
+                startTime: Date.now(),
+                flightTime: 0
+            };
+            
+            function clamp(value, min, max) {
+                return Math.max(min, Math.min(max, value));
+            }
+
+            function damp(current, target, smoothing, deltaTime) {
+                return current + (target - current) * (1 - Math.exp(-smoothing * deltaTime));
+            }
+
+            function dampVector(current, target, smoothing, deltaTime) {
+                return current.lerp(target, 1 - Math.exp(-smoothing * deltaTime));
+            }
+
+            function seededNoise(x, z) {
+                return Math.sin(x * 12.9898 + z * 78.233) * 43758.5453 % 1;
+            }
+
+            function terrainHeight(x, z) {
+                const ridge = Math.sin(x * 0.00075) * 95 + Math.cos(z * 0.00065) * 85;
+                const detail = Math.sin((x + z) * 0.0025) * 34 + Math.cos((x - z) * 0.0035) * 22;
+                const noise = seededNoise(Math.floor(x * 0.015), Math.floor(z * 0.015)) * 12;
+                return ridge + detail + noise;
+            }
+
+            const ControlState = {
+                aimX: 0,
+                aimY: 0,
+                pitch: 0,
+                roll: 0,
+                yaw: 0,
+                throttle: 0,
+                keys: new Set()
+            };
+
+            // Flight physics
+            const FlightModel = {
+                // Position and orientation
+                position: new THREE.Vector3(0, 500, 0),
+                velocity: new THREE.Vector3(0, 0, 0),
+                rotation: new THREE.Euler(0, 0, 0, 'YXZ'),
+                forward: new THREE.Vector3(0, 0, -1),
+                right: new THREE.Vector3(1, 0, 0),
+                up: new THREE.Vector3(0, 1, 0),
+                
+                // Flight parameters
+                throttle: 0.62,
+                speed: 95,
+                maxSpeed: 230,
+                minSpeed: 45,
+                stallSpeed: 55,
+                
+                // Control inputs
+                pitch: 0,
+                roll: 0,
+                yaw: 0,
+                
+                // Tuned arcade-flight constants
+                maxPitch: Math.PI * 0.32,
+                maxRoll: Math.PI * 0.55,
+                pitchResponse: 3.8,
+                rollResponse: 4.5,
+                bankTurnRate: 0.95,
+                rudderTurnRate: 0.75,
+                throttleRate: 0.35,
+                speedResponse: 1.15,
+                stallSinkRate: 42,
+                
+                update: function(deltaTime) {
+                    this.throttle = clamp(this.throttle + ControlState.throttle * this.throttleRate * deltaTime, 0, 1);
+
+                    const speedFloor = this.minSpeed + this.throttle * 18;
+                    const targetSpeed = speedFloor + this.throttle * (this.maxSpeed - speedFloor);
+                    this.speed = damp(this.speed, targetSpeed, this.speedResponse, deltaTime);
+
+                    const speedControl = clamp((this.speed - this.stallSpeed * 0.65) / this.stallSpeed, 0.25, 1);
+                    const pitchCommand = clamp(ControlState.aimY + ControlState.pitch * 0.65, -1, 1);
+                    const rollCommand = clamp(-(ControlState.aimX + ControlState.roll * 0.75), -1, 1);
+                    const targetPitch = pitchCommand * this.maxPitch * speedControl;
+                    const targetRoll = rollCommand * this.maxRoll * speedControl;
+
+                    this.pitch = damp(this.pitch, targetPitch, this.pitchResponse, deltaTime);
+                    this.roll = damp(this.roll, targetRoll, this.rollResponse, deltaTime);
+                    this.yaw += (this.roll * this.bankTurnRate + ControlState.yaw * this.rudderTurnRate) * speedControl * deltaTime;
+
+                    this.rotation.set(this.pitch, this.yaw, this.roll, 'YXZ');
+                    this.forward.set(0, 0, -1).applyEuler(this.rotation).normalize();
+                    this.right.set(1, 0, 0).applyEuler(this.rotation).normalize();
+                    this.up.set(0, 1, 0).applyEuler(this.rotation).normalize();
+
+                    this.velocity.copy(this.forward).multiplyScalar(this.speed);
+
+                    const stallAmount = clamp((this.stallSpeed - this.speed) / this.stallSpeed, 0, 1);
+                    const highAoA = clamp((Math.abs(this.pitch) - 0.55) / 0.45, 0, 1);
+                    this.velocity.y -= (stallAmount * this.stallSinkRate + highAoA * (1 - this.throttle) * 22);
+
+                    this.position.addScaledVector(this.velocity, deltaTime);
+
+                    const groundHeight = Math.max(20, terrainHeight(this.position.x, this.position.z) + 35);
+                    if (this.position.y < groundHeight) {
+                        this.position.y = groundHeight;
+                        this.speed = Math.max(this.minSpeed, this.speed * 0.62);
+                        this.pitch = Math.max(this.pitch, 0.08);
+                    }
+                }
+            };
+            
+            // Three.js variables
+            let scene, camera, renderer, hudCtx;
+            let airplane, propeller;
+            let directionalLight;
+            
+            // World objects
+            const worldObjects = [];
+            const clouds = [];
+            const cameraTarget = new THREE.Vector3();
+            
+            function init() {
+                // Setup Three.js renderer
+                const canvas = document.getElementById('gameCanvas');
+                renderer = new THREE.WebGLRenderer({ 
+                    canvas: canvas, 
+                    antialias: true,
+                    alpha: false
+                });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                if ('outputEncoding' in renderer) {
+                    renderer.outputEncoding = THREE.sRGBEncoding;
+                }
+                if ('toneMapping' in renderer) {
+                    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                    renderer.toneMappingExposure = 0.95;
+                }
+                
+                // Setup HUD canvas
+                const hudCanvas = document.getElementById('hudCanvas');
+                resizeHudCanvas(hudCanvas);
+                hudCtx = hudCanvas.getContext('2d');
+                resizeHudCanvas(hudCanvas);
+                
+                // Create scene
+                scene = new THREE.Scene();
+                scene.fog = new THREE.Fog(0x9bcfff, 1200, 18000);
+                
+                // Setup camera
+                camera = new THREE.PerspectiveCamera(
+                    75,
+                    window.innerWidth / window.innerHeight,
+                    0.1,
+                    50000
+                );
+                
+                // Create world
+                createLighting();
+                createSkybox();
+                createTerrain();
+                createClouds();
+                createWorldObjects();
+                createAirplane();
+                
+                // Setup controls
+                setupEventListeners();
+
+                // Start render loop
+                requestAnimationFrame(animate);
+            }
+            
+            function createLighting() {
+                // Ambient light
+                const ambientLight = new THREE.AmbientLight(0xd8ecff, 0.45);
+                scene.add(ambientLight);
+                
+                // Directional light (sun)
+                directionalLight = new THREE.DirectionalLight(0xfff1cf, 1.1);
+                directionalLight.position.set(250, 650, 320);
+                directionalLight.castShadow = true;
+                directionalLight.shadow.camera.left = -900;
+                directionalLight.shadow.camera.right = 900;
+                directionalLight.shadow.camera.top = 900;
+                directionalLight.shadow.camera.bottom = -900;
+                directionalLight.shadow.camera.near = 0.5;
+                directionalLight.shadow.camera.far = 2200;
+                directionalLight.shadow.mapSize.width = 2048;
+                directionalLight.shadow.mapSize.height = 2048;
+                scene.add(directionalLight);
+                scene.add(directionalLight.target);
+                
+                // Hemisphere light
+                const hemiLight = new THREE.HemisphereLight(0x9ad7ff, 0x516144, 0.55);
+                scene.add(hemiLight);
+            }
+            
+            function createSkybox() {
+                const skyGeometry = new THREE.SphereGeometry(40000, 32, 32);
+                const skyMaterial = new THREE.ShaderMaterial({
+                    uniforms: {
+                        topColor: { value: new THREE.Color(0x1d68d8) },
+                        horizonColor: { value: new THREE.Color(0xcdeeff) },
+                        glowColor: { value: new THREE.Color(0xffe2ad) }
+                    },
+                    vertexShader: `
+                        varying vec3 vWorldPosition;
+                        void main() {
+                            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                            vWorldPosition = worldPosition.xyz;
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                        }
+                    `,
+                    fragmentShader: `
+                        uniform vec3 topColor;
+                        uniform vec3 horizonColor;
+                        uniform vec3 glowColor;
+                        varying vec3 vWorldPosition;
+                        void main() {
+                            vec3 direction = normalize(vWorldPosition);
+                            float skyMix = smoothstep(-0.1, 0.9, direction.y);
+                            float sunGlow = pow(max(dot(direction, normalize(vec3(0.25, 0.82, 0.35))), 0.0), 14.0);
+                            vec3 color = mix(horizonColor, topColor, skyMix);
+                            color = mix(color, glowColor, sunGlow * 0.45);
+                            gl_FragColor = vec4(color, 1.0);
+                        }
+                    `,
+                    side: THREE.BackSide,
+                    depthWrite: false
+                });
+                const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+                scene.add(sky);
+            }
+            
+            function createTerrain() {
+                // Create large terrain with height variation
+                const terrainSize = 10000;
+                const segments = 200;
+                const terrainGeometry = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
+                
+                // Add height variation
+                const vertices = terrainGeometry.attributes.position.array;
+                for (let i = 0; i < vertices.length; i += 3) {
+                    const x = vertices[i];
+                    const z = vertices[i + 1];
+                    vertices[i + 2] = terrainHeight(x, z);
+                }
+                
+                terrainGeometry.computeVertexNormals();
+                
+                const terrainMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x4f8d4b,
+                    shininess: 12,
+                    specular: 0x163515
+                });
+                
+                const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
+                terrain.rotation.x = -Math.PI / 2;
+                terrain.receiveShadow = true;
+                scene.add(terrain);
+                
+                // Add water at sea level
+                const waterGeometry = new THREE.PlaneGeometry(terrainSize * 2, terrainSize * 2);
+                const waterMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x0d78a5,
+                    transparent: true,
+                    opacity: 0.72,
+                    shininess: 140,
+                    specular: 0x8fdcff
+                });
+                const water = new THREE.Mesh(waterGeometry, waterMaterial);
+                water.rotation.x = -Math.PI / 2;
+                water.position.y = -10;
+                scene.add(water);
+            }
+            
+            function createClouds() {
+                // Create layered cloud clusters with fewer, larger parts.
+                for (let i = 0; i < 36; i++) {
+                    const cloudGroup = new THREE.Group();
+                    const seed = i * 17.31;
+                    const partCount = 4 + (i % 4);
+                    
+                    for (let j = 0; j < partCount; j++) {
+                        const cloudPartGeometry = new THREE.SphereGeometry(
+                            120 + (seededNoise(seed, j) + 1) * 55,
+                            8,
+                            6
+                        );
+                        const cloudPartMaterial = new THREE.MeshPhongMaterial({
+                            color: 0xffffff,
+                            transparent: true,
+                            opacity: 0.58,
+                            depthWrite: false
+                        });
+                        const cloudPart = new THREE.Mesh(cloudPartGeometry, cloudPartMaterial);
+                        cloudPart.position.set(
+                            Math.sin(seed + j * 1.8) * 150,
+                            Math.cos(seed + j * 0.7) * 32,
+                            Math.sin(seed * 0.5 + j) * 130
+                        );
+                        cloudPart.scale.set(1.6, 0.55, 1.0 + (j % 2) * 0.35);
+                        cloudGroup.add(cloudPart);
+                    }
+                    
+                    cloudGroup.position.set(
+                        Math.sin(seed) * 4200,
+                        950 + (i % 9) * 95,
+                        Math.cos(seed * 1.37) * 4200
+                    );
+                    cloudGroup.userData.drift = 2 + (i % 5) * 0.45;
+                    
+                    clouds.push(cloudGroup);
+                    scene.add(cloudGroup);
+                }
+            }
+            
+            function createWorldObjects() {
+                // Create buildings/landmarks
+                const buildingMaterial = new THREE.MeshPhongMaterial({ color: 0x8a8f9a, shininess: 55 });
+                
+                // Create city area
+                for (let i = 0; i < 64; i++) {
+                    const row = Math.floor(i / 8);
+                    const col = i % 8;
+                    const buildingHeight = 55 + ((i * 37) % 170);
+                    const buildingGeometry = new THREE.BoxGeometry(
+                        32 + (i % 3) * 16,
+                        buildingHeight,
+                        32 + (row % 3) * 14
+                    );
+                    const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+                    building.position.set(
+                        -1450 + col * 115,
+                        buildingHeight / 2,
+                        -1550 + row * 115
+                    );
+                    building.castShadow = true;
+                    building.receiveShadow = true;
+                    worldObjects.push(building);
+                    scene.add(building);
+                }
+                
+                // Create some towers
+                for (let i = 0; i < 8; i++) {
+                    const towerGeometry = new THREE.CylinderGeometry(20, 30, 300, 8);
+                    const towerMaterial = new THREE.MeshPhongMaterial({ 
+                        color: 0xff0000,
+                        emissive: 0xff0000,
+                        emissiveIntensity: 0.2
+                    });
+                    const tower = new THREE.Mesh(towerGeometry, towerMaterial);
+                    const angle = i / 8 * Math.PI * 2;
+                    tower.position.set(
+                        Math.cos(angle) * 2600,
+                        150,
+                        Math.sin(angle) * 2600
+                    );
+                    tower.castShadow = true;
+                    worldObjects.push(tower);
+                    scene.add(tower);
+                }
+                
+                // Create mountains
+                for (let i = 0; i < 14; i++) {
+                    const radius = 260 + (i % 5) * 70;
+                    const height = 420 + (i % 4) * 115;
+                    const mountainGeometry = new THREE.ConeGeometry(
+                        radius,
+                        height,
+                        8
+                    );
+                    const mountainMaterial = new THREE.MeshLambertMaterial({ 
+                        color: 0x654321 
+                    });
+                    const mountain = new THREE.Mesh(mountainGeometry, mountainMaterial);
+                    const angle = i / 14 * Math.PI * 2 + 0.35;
+                    mountain.position.set(
+                        Math.cos(angle) * 4300,
+                        height / 2 - 15,
+                        Math.sin(angle) * 4300
+                    );
+                    mountain.castShadow = true;
+                    worldObjects.push(mountain);
+                    scene.add(mountain);
+                }
+            }
+            
+            function createAirplane() {
+                airplane = new THREE.Group();
+                
+                // Fuselage
+                const fuselageGeometry = new THREE.CylinderGeometry(1, 2, 15, 8);
+                const fuselageMaterial = new THREE.MeshPhongMaterial({ 
+                    color: 0x0066cc,
+                    shininess: 100
+                });
+                const fuselage = new THREE.Mesh(fuselageGeometry, fuselageMaterial);
+                fuselage.rotation.x = Math.PI / 2;
+                fuselage.castShadow = true;
+                airplane.add(fuselage);
+                
+                // Wings
+                const wingGeometry = new THREE.BoxGeometry(40, 0.5, 6);
+                const wingMaterial = new THREE.MeshPhongMaterial({ color: 0x0066cc });
+                const wings = new THREE.Mesh(wingGeometry, wingMaterial);
+                wings.castShadow = true;
+                airplane.add(wings);
+                
+                // Tail
+                const tailGeometry = new THREE.BoxGeometry(0.5, 8, 4);
+                const tail = new THREE.Mesh(tailGeometry, wingMaterial);
+                tail.position.set(0, 2, 7);
+                airplane.add(tail);
+                
+                // Horizontal stabilizer
+                const stabGeometry = new THREE.BoxGeometry(10, 0.3, 2);
+                const stabilizer = new THREE.Mesh(stabGeometry, wingMaterial);
+                stabilizer.position.set(0, 0, 7);
+                airplane.add(stabilizer);
+                
+                // Engine nacelles
+                for (let i = 0; i < 2; i++) {
+                    const engineGeometry = new THREE.CylinderGeometry(1.5, 1.2, 4, 8);
+                    const engineMaterial = new THREE.MeshPhongMaterial({ color: 0x333333 });
+                    const engine = new THREE.Mesh(engineGeometry, engineMaterial);
+                    engine.rotation.x = Math.PI / 2;
+                    engine.position.set(i === 0 ? 5 : -5, -0.5, -2);
+                    airplane.add(engine);
+                }
+                
+                // Propeller
+                const propellerGeometry = new THREE.BoxGeometry(0.5, 8, 1);
+                const propellerMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x222222,
+                    transparent: true,
+                    opacity: 0.78
+                });
+                propeller = new THREE.Mesh(propellerGeometry, propellerMaterial);
+                propeller.position.set(0, 0, -10);
+                airplane.add(propeller);
+                
+                // Cockpit windows
+                const cockpitGeometry = new THREE.BoxGeometry(3, 2, 3);
+                const cockpitMaterial = new THREE.MeshPhongMaterial({ 
+                    color: 0x111111,
+                    shininess: 200
+                });
+                const cockpit = new THREE.Mesh(cockpitGeometry, cockpitMaterial);
+                cockpit.position.set(0, 1, -3);
+                airplane.add(cockpit);
+
+                // Nose cone helps show the actual forward direction in chase view.
+                const noseGeometry = new THREE.ConeGeometry(1.85, 3, 16);
+                const nose = new THREE.Mesh(noseGeometry, fuselageMaterial);
+                nose.rotation.x = -Math.PI / 2;
+                nose.position.set(0, 0, -8.8);
+                nose.castShadow = true;
+                airplane.add(nose);
+                
+                scene.add(airplane);
+            }
+            
+            function updateCamera(deltaTime) {
+                if (GameState.viewMode === 'cockpit') {
+                    const cockpitPosition = FlightModel.position.clone()
+                        .addScaledVector(FlightModel.up, 2.8)
+                        .addScaledVector(FlightModel.forward, 4.5);
+                    const lookAt = cockpitPosition.clone()
+                        .addScaledVector(FlightModel.forward, 180)
+                        .addScaledVector(FlightModel.up, ControlState.aimY * 10);
+
+                    camera.position.copy(cockpitPosition);
+                    camera.up.copy(FlightModel.up);
+                    camera.lookAt(lookAt);
+                } else {
+                    const idealPosition = FlightModel.position.clone()
+                        .addScaledVector(FlightModel.forward, -62)
+                        .addScaledVector(FlightModel.up, 18)
+                        .addScaledVector(FlightModel.right, -FlightModel.roll * 9);
+                    const lookAtPosition = FlightModel.position.clone()
+                        .addScaledVector(FlightModel.forward, 52)
+                        .addScaledVector(FlightModel.up, 8);
+
+                    dampVector(camera.position, idealPosition, 4.2, deltaTime);
+                    dampVector(cameraTarget, lookAtPosition, 5.5, deltaTime);
+                    camera.up.set(0, 1, 0);
+                    camera.lookAt(cameraTarget);
+                }
+            }
+            
+            function updateAirplane() {
+                // Update airplane position and rotation
+                airplane.position.copy(FlightModel.position);
+                airplane.rotation.copy(FlightModel.rotation);
+                
+                // Spin propeller
+                if (propeller) {
+                    propeller.rotation.z += (0.55 + FlightModel.throttle * 1.8) * (FlightModel.speed / FlightModel.maxSpeed + 0.25);
+                    propeller.material.opacity = 0.45 + FlightModel.throttle * 0.35;
+                }
+                
+                // Hide airplane in cockpit view
+                airplane.visible = GameState.viewMode !== 'cockpit';
+            }
+            
+            function drawHUD() {
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                hudCtx.clearRect(0, 0, width, height);
+                
+                if (!GameState.isPlaying) return;
+                
+                // HUD styling
+                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                hudCtx.strokeStyle = '#00ff00';
+                hudCtx.lineWidth = 2;
+                
+                // Speed indicator
+                hudCtx.fillRect(20, 20, 200, 60);
+                hudCtx.strokeRect(20, 20, 200, 60);
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = 'bold 18px monospace';
+                hudCtx.fillText('SPEED', 30, 45);
+                hudCtx.font = 'bold 24px monospace';
+                hudCtx.fillText(`${Math.round(FlightModel.speed)} u/s`, 30, 70);
+                
+                // Altitude
+                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                hudCtx.fillRect(20, 90, 200, 60);
+                hudCtx.strokeRect(20, 90, 200, 60);
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = 'bold 18px monospace';
+                hudCtx.fillText('ALTITUDE', 30, 115);
+                hudCtx.font = 'bold 24px monospace';
+                hudCtx.fillText(`${Math.round(FlightModel.position.y)} m`, 30, 140);
+                
+                // Throttle
+                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                hudCtx.fillRect(20, 160, 200, 60);
+                hudCtx.strokeRect(20, 160, 200, 60);
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = 'bold 18px monospace';
+                hudCtx.fillText('THROTTLE', 30, 185);
+                hudCtx.fillRect(30, 195, FlightModel.throttle * 180, 20);
+                hudCtx.strokeRect(30, 195, 180, 20);
+                
+                // View mode indicator
+                hudCtx.fillStyle = '#00ff00';
+                hudCtx.font = '16px monospace';
+                hudCtx.fillText(`View: ${GameState.viewMode.toUpperCase()} (V)`, 20, height - 44);
+                hudCtx.fillText('Mouse aim | WASD/arrows pitch/roll | Shift/Ctrl throttle | R reset', 20, height - 20);
+                
+                const centerX = width / 2;
+                const centerY = height / 2;
+                const aimX = centerX + ControlState.aimX * 170;
+                const aimY = centerY - ControlState.aimY * 110;
+
+                hudCtx.strokeStyle = 'rgba(0, 255, 100, 0.85)';
+                hudCtx.lineWidth = 2;
+                hudCtx.beginPath();
+                hudCtx.moveTo(centerX - 26, centerY);
+                hudCtx.lineTo(centerX - 8, centerY);
+                hudCtx.moveTo(centerX + 8, centerY);
+                hudCtx.lineTo(centerX + 26, centerY);
+                hudCtx.moveTo(centerX, centerY - 26);
+                hudCtx.lineTo(centerX, centerY - 8);
+                hudCtx.moveTo(centerX, centerY + 8);
+                hudCtx.lineTo(centerX, centerY + 26);
+                hudCtx.stroke();
+
+                hudCtx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                hudCtx.beginPath();
+                hudCtx.arc(aimX, aimY, 16, 0, Math.PI * 2);
+                hudCtx.moveTo(aimX - 28, aimY);
+                hudCtx.lineTo(aimX - 18, aimY);
+                hudCtx.moveTo(aimX + 18, aimY);
+                hudCtx.lineTo(aimX + 28, aimY);
+                hudCtx.moveTo(aimX, aimY - 28);
+                hudCtx.lineTo(aimX, aimY - 18);
+                hudCtx.moveTo(aimX, aimY + 18);
+                hudCtx.lineTo(aimX, aimY + 28);
+                hudCtx.stroke();
+                
+                // Stall warning
+                if (FlightModel.speed < FlightModel.stallSpeed && FlightModel.position.y > 100) {
+                    hudCtx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+                    hudCtx.font = 'bold 48px monospace';
+                    hudCtx.fillText('STALL WARNING', 
+                        width / 2 - 180,
+                        height / 2 - 70);
+                }
+            }
+            
+            function setupEventListeners() {
+                document.addEventListener('keydown', handleKeyDown);
+                document.addEventListener('keyup', handleKeyUp);
+                document.addEventListener('pointermove', handlePointerMove);
+                document.addEventListener('pointerleave', centerPointerAim);
+                document.querySelector('.start-prompt').addEventListener('click', startGame);
+                window.addEventListener('resize', handleResize);
+            }
+            
+            function handleKeyDown(event) {
+                if (!GameState.isPlaying && (event.code === 'Space' || event.key === ' ')) {
+                    event.preventDefault();
+                    startGame();
+                    return;
+                }
+                
+                if (!GameState.isPlaying) return;
+
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+                    event.preventDefault();
+                }
+                
+                switch(event.code) {
+                    case 'KeyW':
+                    case 'ArrowUp':
+                    case 'KeyS':
+                    case 'ArrowDown':
+                    case 'KeyA':
+                    case 'ArrowLeft':
+                    case 'KeyD':
+                    case 'ArrowRight':
+                    case 'KeyQ':
+                    case 'KeyE':
+                    case 'ShiftLeft':
+                    case 'ShiftRight':
+                    case 'ControlLeft':
+                    case 'ControlRight':
+                        ControlState.keys.add(event.code);
+                        updateKeyboardControls();
+                        break;
+                    case 'KeyV':
+                        if (!event.repeat) {
+                            GameState.viewMode = GameState.viewMode === 'cockpit' ? 'external' : 'cockpit';
+                        }
+                        break;
+                    case 'KeyR':
+                        resetPlane();
+                        break;
+                }
+            }
+            
+            function handleKeyUp(event) {
+                switch(event.code) {
+                    case 'KeyW':
+                    case 'KeyS':
+                    case 'ArrowUp':
+                    case 'ArrowDown':
+                    case 'KeyA':
+                    case 'KeyD':
+                    case 'ArrowLeft':
+                    case 'ArrowRight':
+                    case 'KeyQ':
+                    case 'KeyE':
+                    case 'ShiftLeft':
+                    case 'ShiftRight':
+                    case 'ControlLeft':
+                    case 'ControlRight':
+                        ControlState.keys.delete(event.code);
+                        updateKeyboardControls();
+                        break;
+                }
+            }
+
+            function updateKeyboardControls() {
+                const keys = ControlState.keys;
+                ControlState.pitch =
+                    (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) +
+                    (keys.has('KeyS') || keys.has('ArrowDown') ? -1 : 0);
+                ControlState.roll =
+                    (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) +
+                    (keys.has('KeyA') || keys.has('ArrowLeft') ? -1 : 0);
+                ControlState.yaw =
+                    (keys.has('KeyQ') ? 1 : 0) +
+                    (keys.has('KeyE') ? -1 : 0);
+                ControlState.throttle =
+                    (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 1 : 0) +
+                    (keys.has('ControlLeft') || keys.has('ControlRight') ? -1 : 0);
+            }
+
+            function handlePointerMove(event) {
+                if (!GameState.isPlaying) return;
+
+                const x = (event.clientX / window.innerWidth) * 2 - 1;
+                const y = 1 - (event.clientY / window.innerHeight) * 2;
+                const deadZone = 0.04;
+                ControlState.aimX = Math.abs(x) < deadZone ? 0 : clamp(x, -1, 1);
+                ControlState.aimY = Math.abs(y) < deadZone ? 0 : clamp(y, -1, 1);
+            }
+
+            function centerPointerAim() {
+                ControlState.aimX = 0;
+                ControlState.aimY = 0;
+            }
+
+            function resizeHudCanvas(hudCanvas) {
+                const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+                hudCanvas.width = Math.floor(window.innerWidth * pixelRatio);
+                hudCanvas.height = Math.floor(window.innerHeight * pixelRatio);
+                hudCanvas.style.width = `${window.innerWidth}px`;
+                hudCanvas.style.height = `${window.innerHeight}px`;
+                if (hudCtx) {
+                    hudCtx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+                }
+            }
+            
+            function handleResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                
+                const hudCanvas = document.getElementById('hudCanvas');
+                resizeHudCanvas(hudCanvas);
+            }
+            
+            function startGame() {
+                document.getElementById('startScreen').classList.add('hidden');
+                GameState.isPlaying = true;
+                GameState.startTime = Date.now();
+                centerPointerAim();
+                resetPlane();
+            }
+            
+            function resetPlane() {
+                FlightModel.position.set(0, 500, 0);
+                FlightModel.velocity.set(0, 0, 0);
+                FlightModel.pitch = 0;
+                FlightModel.roll = 0;
+                FlightModel.yaw = 0;
+                FlightModel.rotation.set(0, 0, 0, 'YXZ');
+                FlightModel.forward.set(0, 0, -1);
+                FlightModel.right.set(1, 0, 0);
+                FlightModel.up.set(0, 1, 0);
+                FlightModel.speed = 95;
+                FlightModel.throttle = 0.62;
+                ControlState.pitch = 0;
+                ControlState.roll = 0;
+                ControlState.yaw = 0;
+                ControlState.throttle = 0;
+                ControlState.keys.clear();
+                camera.position.set(0, 525, 70);
+                cameraTarget.copy(FlightModel.position);
+            }
+            
+            let lastTime = 0;
+            function animate(currentTime) {
+                requestAnimationFrame(animate);
+                
+                if (!lastTime) {
+                    lastTime = currentTime;
+                }
+                const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1); // Cap at 100ms
+                lastTime = currentTime;
+                
+                if (GameState.isPlaying && deltaTime > 0) {
+                    FlightModel.update(deltaTime);
+                    updateAirplane();
+                    updateCamera(deltaTime);
+
+                    clouds.forEach((cloud) => {
+                        cloud.position.x += cloud.userData.drift * deltaTime;
+                        if (cloud.position.x > 4700) {
+                            cloud.position.x = -4700;
+                        }
+                    });
+                    
+                    // Update sun position based on plane
+                    directionalLight.position.set(
+                        FlightModel.position.x + 200,
+                        500,
+                        FlightModel.position.z + 200
+                    );
+                    directionalLight.target.position.copy(FlightModel.position);
+                    directionalLight.target.updateMatrixWorld();
+                }
+                
+                drawHUD();
+                renderer.render(scene, camera);
+            }
+            
+            // Initialize everything
+            init();
+        }
+    </script>
+</body>
+</html> 

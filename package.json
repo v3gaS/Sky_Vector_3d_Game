@@ -1,0 +1,22 @@
+{
+  "name": "sky-vector-3d",
+  "version": "1.0.0",
+  "description": "Browser-based 3D flight simulator built with Three.js",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "capture-demo": "node scripts/capture-readme-gif.mjs"
+  },
+  "keywords": [
+    "threejs",
+    "flight-simulator",
+    "webgl",
+    "game",
+    "browser-game"
+  ],
+  "devDependencies": {
+    "playwright": "1.49.0"
+  }
+}

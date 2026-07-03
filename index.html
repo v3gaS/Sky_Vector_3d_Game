@@ -7,19 +7,25 @@
     <title>SkyVector — 3D Flight Simulator</title>
     <style>
         /* SkyVector — browser-based 3D flight simulator */
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
-        body {
-            font-family: 'Arial', sans-serif;
-            overflow: hidden;
-            background: #000;
+
+        :root {
+            --ink: #eaf4ff;
+            --accent: #7fd4ff;
+            --accent-warm: #ffb36b;
         }
-        
+
+        body {
+            font-family: 'Avenir Next', 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif;
+            overflow: hidden;
+            background: #04070d;
+        }
+
         #gameCanvas {
             position: absolute;
             top: 0;
@@ -27,7 +33,7 @@
             width: 100%;
             height: 100%;
         }
-        
+
         #hudCanvas {
             position: absolute;
             top: 0;
@@ -36,81 +42,189 @@
             height: 100%;
             pointer-events: none;
         }
-        
+
         #startScreen {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            inset: 0;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: white;
+            overflow: hidden;
+            color: var(--ink);
             z-index: 10;
+            background:
+                radial-gradient(120% 90% at 50% 108%, #ff9d5c 0%, #e86a4f 12%, rgba(232, 106, 79, 0) 38%),
+                linear-gradient(to bottom, #060d21 0%, #0d2145 34%, #1d4a7d 58%, #3f7fae 74%, #dc8a58 100%);
         }
-        
-        #startScreen h1 {
-            font-size: 72px;
-            margin-bottom: 20px;
-            text-shadow: 3px 3px 6px rgba(0,0,0,0.5);
-            letter-spacing: 4px;
+
+        #startScreen::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: 18%;
+            width: 46vmin;
+            height: 46vmin;
+            transform: translateX(-50%);
+            background: radial-gradient(circle, rgba(255, 214, 150, 0.55) 0%, rgba(255, 178, 102, 0.22) 34%, rgba(255, 170, 90, 0) 70%);
+            pointer-events: none;
         }
-        
-        #startScreen .subtitle {
-            font-size: 24px;
-            margin-bottom: 40px;
-            opacity: 0.9;
+
+        .ridge {
+            position: absolute;
+            left: -4vw;
+            right: -4vw;
+            bottom: 0;
+            pointer-events: none;
         }
-        
-        #startScreen .controls {
-            background: rgba(0,0,0,0.3);
-            padding: 20px 40px;
-            border-radius: 10px;
-            max-width: 600px;
+
+        .ridge.r1 {
+            height: 30vh;
+            background: #12233f;
+            opacity: 0.75;
+            clip-path: polygon(0 78%, 7% 58%, 15% 72%, 24% 44%, 33% 66%, 43% 38%, 53% 64%, 63% 46%, 72% 70%, 82% 50%, 91% 68%, 100% 56%, 100% 100%, 0 100%);
+        }
+
+        .ridge.r2 {
+            height: 22vh;
+            background: #0a1526;
+            clip-path: polygon(0 64%, 9% 84%, 18% 52%, 28% 78%, 38% 58%, 49% 82%, 60% 54%, 70% 76%, 80% 60%, 90% 80%, 100% 62%, 100% 100%, 0 100%);
+        }
+
+        .title-card {
+            position: relative;
             text-align: center;
+            padding: 44px 58px 38px;
+            border-radius: 22px;
+            background: rgba(7, 14, 26, 0.52);
+            border: 1px solid rgba(140, 200, 255, 0.22);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            animation: cardIn 0.9s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+            max-width: min(640px, 92vw);
         }
-        
-        #startScreen .controls h3 {
-            margin-bottom: 15px;
-            font-size: 20px;
+
+        @keyframes cardIn {
+            from { opacity: 0; transform: translateY(26px) scale(0.97); }
+            to { opacity: 1; transform: none; }
         }
-        
-        #startScreen .controls p {
-            margin: 8px 0;
+
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            letter-spacing: 4px;
+            color: var(--accent);
+            border: 1px solid rgba(127, 212, 255, 0.35);
+            border-radius: 999px;
+            padding: 5px 14px;
+            margin-bottom: 18px;
+            text-transform: uppercase;
+        }
+
+        #startScreen h1 {
+            font-size: clamp(38px, 6.5vw, 62px);
+            font-weight: 800;
+            letter-spacing: 5px;
+            line-height: 1;
+            background: linear-gradient(180deg, #ffffff 20%, #9fd7ff 65%, #5aa8e8 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 6px 24px rgba(90, 168, 232, 0.35));
+        }
+
+        #startScreen h1 span {
+            font-weight: 300;
+        }
+
+        #startScreen .subtitle {
             font-size: 16px;
-            opacity: 0.9;
+            letter-spacing: 1.5px;
+            margin: 14px 0 26px;
+            color: rgba(214, 233, 255, 0.8);
         }
-        
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px 26px;
+            text-align: left;
+            font-size: 13.5px;
+            color: rgba(220, 236, 255, 0.88);
+            margin: 0 auto;
+            max-width: 520px;
+        }
+
+        .controls-grid .row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            white-space: nowrap;
+        }
+
+        .controls-grid .desc {
+            opacity: 0.82;
+        }
+
+        kbd {
+            font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+            font-size: 11.5px;
+            color: #eaf4ff;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+            border: 1px solid rgba(160, 210, 255, 0.35);
+            border-bottom-width: 2px;
+            border-radius: 6px;
+            padding: 2.5px 7px;
+            min-width: 24px;
+            text-align: center;
+            display: inline-block;
+        }
+
+        .hint {
+            margin-top: 18px;
+            font-size: 12.5px;
+            color: rgba(180, 210, 240, 0.62);
+        }
+
         #startScreen .start-prompt {
-            margin-top: 30px;
-            font-size: 28px;
-            animation: pulse 2s ease-in-out infinite;
+            margin-top: 22px;
+            font-size: 19px;
+            letter-spacing: 1px;
+            color: #fff;
+            background: linear-gradient(180deg, rgba(127, 212, 255, 0.22), rgba(127, 212, 255, 0.08));
+            border: 1px solid rgba(127, 212, 255, 0.5);
+            border-radius: 14px;
+            padding: 13px 34px;
+            display: inline-block;
             cursor: pointer;
+            animation: pulse 2.4s ease-in-out infinite;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
         }
-        
+
         #startScreen .start-prompt:hover {
-            transform: scale(1.1);
+            transform: scale(1.05);
+            box-shadow: 0 0 34px rgba(127, 212, 255, 0.35);
         }
-        
+
         @keyframes pulse {
-            0%, 100% { opacity: 0.7; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.05); }
+            0%, 100% { box-shadow: 0 0 10px rgba(127, 212, 255, 0.12); }
+            50% { box-shadow: 0 0 30px rgba(127, 212, 255, 0.4); }
         }
-        
+
         .hidden {
             display: none !important;
         }
-        
+
         #loadingMessage {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            color: white;
-            font-size: 24px;
+            color: #cfe6ff;
+            font-size: 18px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
             z-index: 100;
         }
     </style>
@@ -121,21 +235,25 @@
     <canvas id="hudCanvas"></canvas>
     
     <div id="startScreen" class="hidden">
-        <h1>SkyVector</h1>
-        <div class="subtitle">Advanced 3D Flight Simulator</div>
-        <div class="controls">
-            <h3>Flight Controls</h3>
-            <p><strong>Mouse</strong> - Aim the plane</p>
-            <p><strong>W/S or ↑/↓</strong> - Pitch assist</p>
-            <p><strong>A/D or ←/→</strong> - Roll assist</p>
-            <p><strong>Q/E</strong> - Yaw (rudder)</p>
-            <p><strong>Shift</strong> - Increase throttle</p>
-            <p><strong>Control</strong> - Decrease throttle</p>
-            <p><strong>V</strong> - Toggle view (Cockpit/External)</p>
-            <p><strong>R</strong> - Reset / recover after crash</p>
-            <p>Watch <strong>AGL</strong> (height above terrain). Buildings, towers, trees, and mountains are solid.</p>
+        <div class="ridge r1"></div>
+        <div class="ridge r2"></div>
+        <div class="title-card">
+            <div class="badge">SVX-1 · Flight Ops</div>
+            <h1>SKY<span>VECTOR</span></h1>
+            <div class="subtitle">Procedural 3D flight over an endless coast</div>
+            <div class="controls-grid">
+                <div class="row"><kbd>Mouse</kbd><span class="desc">Aim &amp; bank</span></div>
+                <div class="row"><kbd>W</kbd><kbd>S</kbd><span class="desc">Pitch assist</span></div>
+                <div class="row"><kbd>A</kbd><kbd>D</kbd><span class="desc">Roll assist</span></div>
+                <div class="row"><kbd>Q</kbd><kbd>E</kbd><span class="desc">Rudder</span></div>
+                <div class="row"><kbd>Shift</kbd><span class="desc">Throttle up</span></div>
+                <div class="row"><kbd>Ctrl</kbd><span class="desc">Throttle down</span></div>
+                <div class="row"><kbd>V</kbd><span class="desc">Cockpit / chase view</span></div>
+                <div class="row"><kbd>R</kbd><span class="desc">Reset / recover</span></div>
+            </div>
+            <div class="hint">Watch AGL — buildings, towers, trees, and mountains are solid.</div>
+            <div class="start-prompt">Press <kbd>Space</kbd> to fly</div>
         </div>
-        <div class="start-prompt">Press SPACE or CLICK here to fly</div>
     </div>
     
     <!-- Load Three.js using the standalone build -->
@@ -234,8 +352,8 @@
                 const half = terrainSize * 0.5;
                 const cell = terrainSize / segments;
 
-                const gx = clamp((x + half) / cell, 0, segments);
-                const gz = clamp((z + half) / cell, 0, segments);
+                const gx = clamp((worldX + half) / cell, 0, segments);
+                const gz = clamp((worldZ + half) / cell, 0, segments);
                 const ix = Math.min(Math.floor(gx), segments - 1);
                 const iz = Math.min(Math.floor(gz), segments - 1);
                 const fx = gx - ix;
@@ -701,7 +819,9 @@
             };
             
             let scene, camera, renderer, hudCtx;
-            let airplane, propeller;
+            let airplane, propeller, propDisk, strobeLight;
+            let vaporTrail = null;
+            let sunFlare = null;
             let directionalLight, ambientLight, hemiLight, skyMaterial, skyUniforms;
             let waterUniforms, postFX;
             let terrainMesh = null;
@@ -715,6 +835,10 @@
             const Gfx = window.SkyVectorGfx;
             const cameraTarget = new THREE.Vector3();
             const cameraShakeOffset = new THREE.Vector3();
+            const wingTipLocal = [new THREE.Vector3(-19.2, 0.9, 2.1), new THREE.Vector3(19.2, 0.9, 2.1)];
+            const wingTipWorld = new THREE.Vector3();
+            const wingTipPrev = [new THREE.Vector3(), new THREE.Vector3()];
+            let wingTipPrevValid = false;
             
             function init() {
                 // Setup Three.js renderer
@@ -762,6 +886,8 @@
                 createWorldObjects();
                 createAirplane();
                 createCrashParticles();
+                vaporTrail = Gfx.createVaporTrail(scene);
+                sunFlare = Gfx.createSunFlare(scene);
                 postFX = Gfx.createPostFX(renderer);
                 updateDayNight(0);
                 
@@ -792,7 +918,9 @@
                 GameState.timeOfDay = (GameState.timeOfDay + deltaTime * 0.018) % 1;
                 const t = GameState.timeOfDay;
                 const day = Math.max(0, Math.sin(t * Math.PI * 2 - Math.PI * 0.5) * 0.5 + 0.5);
-                const dusk = Math.pow(Math.max(0, 1 - Math.abs(t - 0.25) * 4), 2);
+                // golden-hour lobes at both sunrise (t≈0.25) and sunset (t≈0.75)
+                const duskDist = Math.min(Math.abs(t - 0.25), Math.abs(t - 0.75));
+                const dusk = Math.pow(Math.max(0, 1 - duskDist * 4), 2);
                 const night = 1 - day;
 
                 if (skyUniforms) {
@@ -800,27 +928,36 @@
                 }
                 if (directionalLight) {
                     directionalLight.color.setRGB(1, 0.94 - dusk * 0.25, 0.75 - dusk * 0.35);
-                    directionalLight.intensity = 0.4 + day * 0.9;
+                    directionalLight.intensity = 0.1 + day * 1.05;
                     Gfx.SUN_DIR.set(0.25, 0.35 + day * 0.5, 0.35).normalize();
                     if (skyUniforms) skyUniforms.sunDirection.value.copy(Gfx.SUN_DIR);
                     if (waterUniforms) waterUniforms.sunDirection.value.copy(Gfx.SUN_DIR);
                 }
                 if (ambientLight) {
-                    ambientLight.intensity = 0.12 + day * 0.18 + dusk * 0.08;
+                    ambientLight.intensity = 0.05 + day * 0.24 + dusk * 0.06;
                 }
                 if (hemiLight) {
-                    hemiLight.intensity = 0.32 + day * 0.28;
+                    hemiLight.intensity = 0.1 + day * 0.45;
+                }
+                if (waterUniforms) {
+                    const dim = 0.22 + day * 0.78;
+                    waterUniforms.waterColor.value.setRGB(0.027 * dim, 0.243 * dim, 0.361 * dim);
+                    waterUniforms.shallowColor.value.setRGB(0.141 * dim, 0.58 * dim, 0.722 * dim);
                 }
                 if (scene.background) {
                     scene.background.copy(scene.fog.color);
                 }
                 buildingMeshes.forEach((mesh, i) => {
-                    mesh.material.emissive.setRGB(0.15, 0.18, 0.28);
-                    mesh.material.emissiveIntensity = night * (0.15 + (i % 3) * 0.08);
+                    if (mesh.userData.sideMat) {
+                        mesh.userData.sideMat.emissiveIntensity = night * (0.55 + (i % 3) * 0.2) + dusk * 0.15;
+                    }
                 });
                 towerMeshes.forEach((mesh) => {
                     mesh.material.emissiveIntensity = 0.15 + night * 0.65;
                 });
+                if (sunFlare) {
+                    sunFlare.update(camera.position, Gfx.SUN_DIR, 0.15 + day * 0.85);
+                }
             }
             
             function createSkybox() {
@@ -875,46 +1012,7 @@
             }
             
             function createClouds() {
-                // Create layered cloud clusters with fewer, larger parts.
-                for (let i = 0; i < 36; i++) {
-                    const cloudGroup = new THREE.Group();
-                    const seed = i * 17.31;
-                    const partCount = 4 + (i % 4);
-                    
-                    for (let j = 0; j < partCount; j++) {
-                        const cloudPartGeometry = new THREE.SphereGeometry(
-                            120 + (seededNoise(seed, j) + 1) * 55,
-                            8,
-                            6
-                        );
-                        const cloudPartMaterial = new THREE.MeshStandardMaterial({
-                            color: 0xffffff,
-                            transparent: true,
-                            opacity: 0.52,
-                            roughness: 1,
-                            metalness: 0,
-                            depthWrite: false
-                        });
-                        const cloudPart = new THREE.Mesh(cloudPartGeometry, cloudPartMaterial);
-                        cloudPart.position.set(
-                            Math.sin(seed + j * 1.8) * 150,
-                            Math.cos(seed + j * 0.7) * 32,
-                            Math.sin(seed * 0.5 + j) * 130
-                        );
-                        cloudPart.scale.set(1.6, 0.55, 1.0 + (j % 2) * 0.35);
-                        cloudGroup.add(cloudPart);
-                    }
-                    
-                    cloudGroup.position.set(
-                        Math.sin(seed) * 4200,
-                        950 + (i % 9) * 95,
-                        Math.cos(seed * 1.37) * 4200
-                    );
-                    cloudGroup.userData.drift = 2 + (i % 5) * 0.45;
-                    
-                    clouds.push(cloudGroup);
-                    scene.add(cloudGroup);
-                }
+                Gfx.createCloudField(scene, 34).forEach((cloud) => clouds.push(cloud));
             }
             
             function createWorldObjects() {
@@ -922,9 +1020,6 @@
                 buildingMeshes.length = 0;
                 towerMeshes.length = 0;
                 treeRecords.length = 0;
-                const buildingMaterial = Gfx.stdMaterial({ color: 0x8a8f9a, roughness: 0.55, metalness: 0.25 });
-                const buildingAccent = Gfx.stdMaterial({ color: 0x6a7588, roughness: 0.5, metalness: 0.35 });
-
                 for (let i = 0; i < 64; i++) {
                     const row = Math.floor(i / 8);
                     const col = i % 8;
@@ -935,10 +1030,12 @@
                     const hx = (32 + (i % 3) * 16) * 0.5;
                     const hz = (32 + (row % 3) * 14) * 0.5;
                     const groundY = propGroundHeight(bx, bz, hx, hz, true);
+                    const facade = Gfx.createBuildingMaterials(i * 2.17 + 1);
                     const building = new THREE.Mesh(
                         new THREE.BoxGeometry(hx * 2, buildingHeight, hz * 2),
-                        (i % 3 === 0) ? buildingAccent : buildingMaterial
+                        facade.materials
                     );
+                    building.userData.sideMat = facade.side;
                     building.position.set(bx, groundY + buildingHeight * 0.5, bz);
                     building.castShadow = true;
                     building.receiveShadow = true;
@@ -983,11 +1080,10 @@
                     const mx = Math.cos(angle) * 4300;
                     const mz = Math.sin(angle) * 4300;
                     const groundY = propGroundHeight(mx, mz, radius * 0.7, radius * 0.7);
-                    const mountainGeo = new THREE.ConeGeometry(radius, height, 10);
-                    Gfx.paintMountainColors(mountainGeo, new THREE.Color(0x5a4635), height);
+                    const mountainGeo = Gfx.createMountainGeometry(radius, height, i * 3.73);
                     const mountain = new THREE.Mesh(
                         mountainGeo,
-                        Gfx.stdMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.92, metalness: 0 })
+                        Gfx.stdMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.95, metalness: 0 })
                     );
                     mountain.position.set(mx, groundY + height * 0.5, mz);
                     mountain.castShadow = true;
@@ -1072,80 +1168,124 @@
             
             function createAirplane() {
                 airplane = new THREE.Group();
-                
-                // Fuselage
-                const fuselageGeometry = new THREE.CylinderGeometry(1, 2, 15, 8);
-                const fuselageMaterial = Gfx.stdMaterial({
-                    color: 0x0066cc,
-                    roughness: 0.35,
-                    metalness: 0.4
-                });
-                const fuselage = new THREE.Mesh(fuselageGeometry, fuselageMaterial);
+
+                const bodyMaterial = Gfx.stdMaterial({ color: 0xf2f5f8, roughness: 0.28, metalness: 0.25 });
+                const accentMaterial = Gfx.stdMaterial({ color: 0xd23c4a, roughness: 0.32, metalness: 0.3 });
+                const darkMetal = Gfx.stdMaterial({ color: 0x2c3138, roughness: 0.45, metalness: 0.7 });
+
+                // Fuselage tapers toward the tail; nose cone completes the front.
+                const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 1.5, 13, 14), bodyMaterial);
                 fuselage.rotation.x = Math.PI / 2;
                 fuselage.castShadow = true;
                 airplane.add(fuselage);
-                
-                // Wings
-                const wingGeometry = new THREE.BoxGeometry(40, 0.5, 6);
-                const wingMaterial = Gfx.stdMaterial({ color: 0x0066cc, roughness: 0.4, metalness: 0.35 });
-                const wings = new THREE.Mesh(wingGeometry, wingMaterial);
-                wings.castShadow = true;
-                airplane.add(wings);
-                
-                // Tail
-                const tailGeometry = new THREE.BoxGeometry(0.5, 8, 4);
-                const tail = new THREE.Mesh(tailGeometry, wingMaterial);
-                tail.position.set(0, 2, 7);
-                airplane.add(tail);
-                
-                // Horizontal stabilizer
-                const stabGeometry = new THREE.BoxGeometry(10, 0.3, 2);
-                const stabilizer = new THREE.Mesh(stabGeometry, wingMaterial);
-                stabilizer.position.set(0, 0, 7);
-                airplane.add(stabilizer);
-                
-                // Engine nacelles
-                for (let i = 0; i < 2; i++) {
-                    const engineGeometry = new THREE.CylinderGeometry(1.5, 1.2, 4, 8);
-                    const engineMaterial = Gfx.stdMaterial({ color: 0x333333, roughness: 0.55, metalness: 0.6 });
-                    const engine = new THREE.Mesh(engineGeometry, engineMaterial);
-                    engine.rotation.x = Math.PI / 2;
-                    engine.position.set(i === 0 ? 5 : -5, -0.5, -2);
-                    airplane.add(engine);
-                }
-                
-                // Propeller
-                const propellerGeometry = new THREE.BoxGeometry(0.5, 8, 1);
-                const propellerMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x222222,
-                    roughness: 0.5,
-                    metalness: 0.5,
-                    transparent: true,
-                    opacity: 0.78
-                });
-                propeller = new THREE.Mesh(propellerGeometry, propellerMaterial);
-                propeller.position.set(0, 0, -10);
-                airplane.add(propeller);
-                
-                // Cockpit windows
-                const cockpitGeometry = new THREE.BoxGeometry(3, 2, 3);
-                const cockpitMaterial = Gfx.stdMaterial({
-                    color: 0x111111,
-                    roughness: 0.15,
-                    metalness: 0.85
-                });
-                const cockpit = new THREE.Mesh(cockpitGeometry, cockpitMaterial);
-                cockpit.position.set(0, 1, -3);
-                airplane.add(cockpit);
 
-                // Nose cone helps show the actual forward direction in chase view.
-                const noseGeometry = new THREE.ConeGeometry(1.85, 3, 16);
-                const nose = new THREE.Mesh(noseGeometry, fuselageMaterial);
+                const nose = new THREE.Mesh(new THREE.ConeGeometry(1.5, 4.2, 14), bodyMaterial);
                 nose.rotation.x = -Math.PI / 2;
-                nose.position.set(0, 0, -8.8);
+                nose.position.set(0, 0, -8.5);
                 nose.castShadow = true;
                 airplane.add(nose);
-                
+
+                const spinner = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.6, 10), accentMaterial);
+                spinner.rotation.x = -Math.PI / 2;
+                spinner.position.set(0, 0, -10.9);
+                airplane.add(spinner);
+
+                // Swept wings with a touch of dihedral
+                [-1, 1].forEach((side) => {
+                    const wing = new THREE.Mesh(new THREE.BoxGeometry(19, 0.42, 5.6), bodyMaterial);
+                    wing.position.set(side * 10.2, -0.15 + 0.55, 0.8);
+                    wing.rotation.z = side * 0.055;
+                    wing.rotation.y = -side * 0.14;
+                    wing.castShadow = true;
+                    airplane.add(wing);
+
+                    const tip = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.46, 4.4), accentMaterial);
+                    tip.position.set(side * 19.2, 0.92, 2.1);
+                    tip.rotation.z = side * 0.055;
+                    tip.rotation.y = -side * 0.14;
+                    airplane.add(tip);
+
+                    const stab = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.3, 2.6), bodyMaterial);
+                    stab.position.set(side * 2.9, 0.7, 5.9);
+                    stab.rotation.y = -side * 0.18;
+                    airplane.add(stab);
+                });
+
+                // Swept tail fin
+                const fin = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4.8, 3.2), accentMaterial);
+                fin.position.set(0, 2.5, 5.8);
+                fin.rotation.x = 0.28;
+                fin.castShadow = true;
+                airplane.add(fin);
+
+                // Engine nacelles under the wings
+                [-1, 1].forEach((side) => {
+                    const engine = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 0.85, 3.8, 10), darkMetal);
+                    engine.rotation.x = Math.PI / 2;
+                    engine.position.set(side * 5.6, -0.85, -0.6);
+                    airplane.add(engine);
+                });
+
+                // Tinted glass canopy
+                const canopy = new THREE.Mesh(
+                    new THREE.SphereGeometry(1.5, 18, 12),
+                    new THREE.MeshStandardMaterial({
+                        color: 0x0d1826,
+                        roughness: 0.06,
+                        metalness: 0.9,
+                        envMapIntensity: 1.2
+                    })
+                );
+                canopy.scale.set(0.95, 0.8, 2.4);
+                canopy.position.set(0, 1.2, -2.6);
+                airplane.add(canopy);
+
+                // Propeller blades + translucent blur disk
+                propeller = new THREE.Group();
+                [0, Math.PI / 2].forEach((rot) => {
+                    const blade = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.4, 9, 0.85),
+                        new THREE.MeshStandardMaterial({
+                            color: 0x1c1e22,
+                            roughness: 0.5,
+                            metalness: 0.5,
+                            transparent: true,
+                            opacity: 0.85
+                        })
+                    );
+                    blade.rotation.z = rot;
+                    propeller.add(blade);
+                });
+                propeller.position.set(0, 0, -10.4);
+                airplane.add(propeller);
+
+                propDisk = new THREE.Mesh(
+                    new THREE.CircleGeometry(4.6, 24),
+                    new THREE.MeshBasicMaterial({
+                        color: 0x9aa4b0,
+                        transparent: true,
+                        opacity: 0.1,
+                        side: THREE.DoubleSide,
+                        depthWrite: false
+                    })
+                );
+                propDisk.position.set(0, 0, -10.4);
+                airplane.add(propDisk);
+
+                // Navigation lights: red port, green starboard, white tail strobe.
+                const navLight = (color, x, y, z) => {
+                    const lamp = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.34, 8, 8),
+                        new THREE.MeshBasicMaterial({ color })
+                    );
+                    lamp.position.set(x, y, z);
+                    airplane.add(lamp);
+                    return lamp;
+                };
+                navLight(0xff2b38, -19.9, 0.95, 2.1);
+                navLight(0x2bff70, 19.9, 0.95, 2.1);
+                strobeLight = navLight(0xffffff, 0, 4.9, 6.2);
+
                 scene.add(airplane);
             }
             
@@ -1190,23 +1330,110 @@
                     camera.up.set(0, 1, 0);
                     camera.lookAt(cameraTarget);
                 }
+
+                // Speed widens the FOV slightly for a sense of velocity
+                const targetFov = 71 + (FlightModel.speed / FlightModel.maxSpeed) * 9;
+                if (Math.abs(camera.fov - targetFov) > 0.05) {
+                    camera.fov = damp(camera.fov, targetFov, 2.5, deltaTime);
+                    camera.updateProjectionMatrix();
+                }
             }
             
-            function updateAirplane() {
-                // Update airplane position and rotation
+            function updateAirplane(deltaTime) {
                 airplane.position.copy(FlightModel.position);
                 airplane.rotation.copy(FlightModel.rotation);
-                
-                // Spin propeller
+
                 if (propeller) {
                     propeller.rotation.z += (0.55 + FlightModel.throttle * 1.8) * (FlightModel.speed / FlightModel.maxSpeed + 0.25);
-                    propeller.material.opacity = 0.45 + FlightModel.throttle * 0.35;
                 }
-                
+                if (propDisk) {
+                    propDisk.rotation.z -= 0.4;
+                    propDisk.material.opacity = 0.04 + FlightModel.throttle * 0.12;
+                }
+                if (strobeLight) {
+                    strobeLight.visible = (GameState.flightTime * 2.4) % 1 < 0.12;
+                }
+
+                // Wingtip vapor trails, stronger at speed and while banking hard
+                if (vaporTrail && !GameState.crashed) {
+                    const strength = clamp((FlightModel.speed - 105) / 90, 0, 1) *
+                        (0.12 + Math.abs(FlightModel.roll) * 1.4);
+                    if (strength > 0.06) {
+                        airplane.updateMatrixWorld();
+                        for (let t = 0; t < 2; t++) {
+                            wingTipWorld.copy(wingTipLocal[t]);
+                            airplane.localToWorld(wingTipWorld);
+                            if (wingTipPrevValid) {
+                                // midpoint fill keeps the trail continuous at speed
+                                vaporTrail.spawn(
+                                    (wingTipWorld.x + wingTipPrev[t].x) * 0.5,
+                                    (wingTipWorld.y + wingTipPrev[t].y) * 0.5,
+                                    (wingTipWorld.z + wingTipPrev[t].z) * 0.5
+                                );
+                            }
+                            vaporTrail.spawn(wingTipWorld.x, wingTipWorld.y, wingTipWorld.z);
+                            wingTipPrev[t].copy(wingTipWorld);
+                        }
+                        wingTipPrevValid = true;
+                    } else {
+                        wingTipPrevValid = false;
+                    }
+                    vaporTrail.update(deltaTime, 0.4 + clamp(FlightModel.speed / FlightModel.maxSpeed, 0, 1) * 0.6);
+                } else if (vaporTrail) {
+                    vaporTrail.update(deltaTime, 0);
+                }
+
                 // Hide airplane in cockpit view
                 airplane.visible = GameState.viewMode !== 'cockpit';
             }
             
+            const HUD = {
+                mono: "'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace",
+                label: 'rgba(148, 197, 255, 0.8)',
+                value: '#f2f8ff',
+                accent: '#7fd4ff',
+                warn: '#ffb84d',
+                danger: '#ff5560',
+                panelFill: 'rgba(8, 15, 26, 0.52)',
+                panelStroke: 'rgba(130, 195, 255, 0.32)'
+            };
+
+            function roundedPath(x, y, w, h, r) {
+                hudCtx.beginPath();
+                hudCtx.moveTo(x + r, y);
+                hudCtx.arcTo(x + w, y, x + w, y + h, r);
+                hudCtx.arcTo(x + w, y + h, x, y + h, r);
+                hudCtx.arcTo(x, y + h, x, y, r);
+                hudCtx.arcTo(x, y, x + w, y, r);
+                hudCtx.closePath();
+            }
+
+            function drawPanel(x, y, w, h, r) {
+                roundedPath(x, y, w, h, r || 12);
+                hudCtx.fillStyle = HUD.panelFill;
+                hudCtx.fill();
+                hudCtx.strokeStyle = HUD.panelStroke;
+                hudCtx.lineWidth = 1.5;
+                hudCtx.stroke();
+            }
+
+            function hudLabel(text, x, y) {
+                hudCtx.fillStyle = HUD.label;
+                hudCtx.font = `600 10px ${HUD.mono}`;
+                hudCtx.fillText(text.split('').join(' '), x, y);
+            }
+
+            function glowText(text, x, y, font, color, blur) {
+                hudCtx.save();
+                hudCtx.font = font;
+                hudCtx.textAlign = 'center';
+                hudCtx.shadowColor = color;
+                hudCtx.shadowBlur = blur || 18;
+                hudCtx.fillStyle = color;
+                hudCtx.fillText(text, x, y);
+                hudCtx.restore();
+            }
+
             function drawHUD() {
                 const width = window.innerWidth;
                 const height = window.innerHeight;
@@ -1215,7 +1442,7 @@
                 if (!GameState.isPlaying) return;
 
                 if (GameState.crashFlash > 0.05) {
-                    hudCtx.fillStyle = `rgba(220, 30, 30, ${GameState.crashFlash * 0.45})`;
+                    hudCtx.fillStyle = `rgba(220, 30, 30, ${GameState.crashFlash * 0.4})`;
                     hudCtx.fillRect(0, 0, width, height);
                 }
 
@@ -1226,119 +1453,134 @@
                 );
                 const headingDeg = ((FlightModel.yaw * 180 / Math.PI) % 360 + 360) % 360;
 
-                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                hudCtx.strokeStyle = '#00ff00';
-                hudCtx.lineWidth = 2;
+                // --- flight data panel ---
+                drawPanel(20, 20, 216, 168);
+                hudLabel('SPEED', 36, 44);
+                hudCtx.fillStyle = HUD.value;
+                hudCtx.font = `700 30px ${HUD.mono}`;
+                const speedText = `${Math.round(FlightModel.speed)}`;
+                hudCtx.fillText(speedText, 36, 78);
+                const speedW = hudCtx.measureText(speedText).width;
+                hudCtx.fillStyle = HUD.label;
+                hudCtx.font = `500 12px ${HUD.mono}`;
+                hudCtx.fillText('u/s', 36 + speedW + 8, 78);
 
-                hudCtx.fillRect(20, 20, 200, 60);
-                hudCtx.strokeRect(20, 20, 200, 60);
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = 'bold 18px monospace';
-                hudCtx.fillText('SPEED', 30, 45);
-                hudCtx.font = 'bold 24px monospace';
-                hudCtx.fillText(`${Math.round(FlightModel.speed)} u/s`, 30, 70);
+                hudLabel('ALT', 150, 44);
+                hudCtx.fillStyle = HUD.value;
+                hudCtx.font = `700 17px ${HUD.mono}`;
+                hudCtx.fillText(`${Math.round(FlightModel.position.y)}`, 150, 64);
+                hudLabel('AGL', 150, 84);
+                hudCtx.fillStyle = agl < 60 ? HUD.warn : HUD.value;
+                hudCtx.font = `700 17px ${HUD.mono}`;
+                hudCtx.fillText(`${Math.round(agl)}`, 150, 104);
 
-                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                hudCtx.fillRect(20, 90, 200, 60);
-                hudCtx.strokeRect(20, 90, 200, 60);
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = 'bold 18px monospace';
-                hudCtx.fillText('ALT / AGL', 30, 115);
-                hudCtx.font = 'bold 24px monospace';
-                hudCtx.fillText(`${Math.round(FlightModel.position.y)} / ${Math.round(agl)} m`, 30, 140);
-
-                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                hudCtx.fillRect(20, 160, 200, 60);
-                hudCtx.strokeRect(20, 160, 200, 60);
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = 'bold 18px monospace';
-                hudCtx.fillText('THROTTLE', 30, 185);
-                hudCtx.fillRect(30, 195, FlightModel.throttle * 180, 20);
-                hudCtx.strokeRect(30, 195, 180, 20);
-
-                drawAttitudePanel(20, 230, 200, 168, FlightModel.pitch, FlightModel.roll);
-                drawCompass(width / 2, 58, headingDeg);
-                drawMiniMap(width - 165, 24, 140);
-
-                if (GameState.inWater) {
-                    hudCtx.fillStyle = 'rgba(0, 120, 200, 0.75)';
-                    hudCtx.font = 'bold 22px monospace';
-                    hudCtx.fillText('WATER', 30, 430);
+                hudLabel('THROTTLE', 36, 124);
+                const barX = 36;
+                const barY = 134;
+                const barW = 140;
+                const barH = 12;
+                roundedPath(barX, barY, barW, barH, 6);
+                hudCtx.fillStyle = 'rgba(127, 212, 255, 0.12)';
+                hudCtx.fill();
+                if (FlightModel.throttle > 0.01) {
+                    const grad = hudCtx.createLinearGradient(barX, 0, barX + barW, 0);
+                    grad.addColorStop(0, '#2f88c8');
+                    grad.addColorStop(1, '#8fe0ff');
+                    roundedPath(barX, barY, Math.max(barW * FlightModel.throttle, 10), barH, 6);
+                    hudCtx.fillStyle = grad;
+                    hudCtx.fill();
                 }
+                hudCtx.fillStyle = HUD.label;
+                hudCtx.font = `600 11px ${HUD.mono}`;
+                hudCtx.fillText(`${Math.round(FlightModel.throttle * 100)}%`, barX + barW + 8, barY + 11);
 
+                hudCtx.fillStyle = GameState.viewMode === 'cockpit' ? HUD.accent : HUD.label;
+                hudCtx.font = `500 11px ${HUD.mono}`;
+                hudCtx.fillText(`VIEW ${GameState.viewMode.toUpperCase()} · V`, 36, 172);
+
+                drawAttitudePanel(20, 200, 216, 172, FlightModel.pitch, FlightModel.roll);
+                drawCompass(width / 2, 56, headingDeg);
+                drawMiniMap(width - 176, 20, 156);
+
+                // --- center reticle + aim ---
                 const centerX = width / 2;
                 const centerY = height / 2;
-
                 const aimX = centerX + ControlState.aimX * 170;
                 const aimY = centerY - ControlState.aimY * 110;
-                hudCtx.strokeStyle = 'rgba(0, 255, 100, 0.85)';
-                hudCtx.lineWidth = 2;
+                hudCtx.strokeStyle = 'rgba(240, 250, 255, 0.8)';
+                hudCtx.lineWidth = 1.6;
                 hudCtx.beginPath();
-                hudCtx.moveTo(centerX - 26, centerY);
+                hudCtx.moveTo(centerX - 24, centerY);
                 hudCtx.lineTo(centerX - 8, centerY);
                 hudCtx.moveTo(centerX + 8, centerY);
-                hudCtx.lineTo(centerX + 26, centerY);
-                hudCtx.moveTo(centerX, centerY - 26);
+                hudCtx.lineTo(centerX + 24, centerY);
+                hudCtx.moveTo(centerX, centerY - 24);
                 hudCtx.lineTo(centerX, centerY - 8);
                 hudCtx.moveTo(centerX, centerY + 8);
-                hudCtx.lineTo(centerX, centerY + 26);
+                hudCtx.lineTo(centerX, centerY + 24);
                 hudCtx.stroke();
 
-                hudCtx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                hudCtx.strokeStyle = 'rgba(127, 212, 255, 0.9)';
+                hudCtx.lineWidth = 1.8;
                 hudCtx.beginPath();
-                hudCtx.arc(aimX, aimY, 16, 0, Math.PI * 2);
+                hudCtx.arc(aimX, aimY, 15, 0, Math.PI * 2);
                 hudCtx.stroke();
+                hudCtx.fillStyle = 'rgba(127, 212, 255, 0.9)';
+                hudCtx.beginPath();
+                hudCtx.arc(aimX, aimY, 2, 0, Math.PI * 2);
+                hudCtx.fill();
 
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = '16px monospace';
-                hudCtx.fillText(`View: ${GameState.viewMode.toUpperCase()} (V)`, 20, height - 44);
-                hudCtx.fillText('Mouse aim | WASD | Shift/Ctrl throttle | R reset / recover', 20, height - 20);
+                // --- bottom hint chips ---
+                hudCtx.font = `500 11.5px ${HUD.mono}`;
+                const hint = 'MOUSE aim · WASD assist · SHIFT/CTRL throttle · R reset';
+                const hintW = hudCtx.measureText(hint).width + 28;
+                drawPanel(20, height - 46, hintW, 28, 14);
+                hudCtx.fillStyle = 'rgba(190, 220, 250, 0.75)';
+                hudCtx.fillText(hint, 34, height - 27);
 
-                if (agl < 50 && !GameState.crashed) {
-                    hudCtx.fillStyle = 'rgba(255, 180, 0, 0.9)';
-                    hudCtx.font = 'bold 32px monospace';
-                    hudCtx.fillText('TERRAIN', width / 2 - 72, height / 2 - 100);
+                // --- warnings ---
+                if (GameState.inWater && !GameState.crashed) {
+                    glowText('WATER', centerX, height / 2 + 150, `700 24px ${HUD.mono}`, HUD.accent);
                 }
-
+                if (agl < 50 && !GameState.crashed) {
+                    glowText('TERRAIN', centerX, height / 2 - 104, `700 30px ${HUD.mono}`, HUD.warn);
+                }
                 if (GameState.nearestObstacle && agl < 100 && !GameState.crashed) {
-                    hudCtx.fillStyle = 'rgba(255, 220, 80, 0.9)';
-                    hudCtx.font = 'bold 18px monospace';
                     const label = GameState.nearestObstacle.obstacle.label.toUpperCase();
-                    hudCtx.fillText(
+                    glowText(
                         `${label} ${Math.round(GameState.nearestObstacle.distance)}m`,
-                        width / 2 - 80,
-                        height / 2 - 130
+                        centerX,
+                        height / 2 - 140,
+                        `600 16px ${HUD.mono}`,
+                        HUD.warn,
+                        10
                     );
                 }
-
                 if (GameState.crashed) {
-                    hudCtx.fillStyle = 'rgba(255, 40, 40, 0.92)';
-                    hudCtx.font = 'bold 44px monospace';
-                    hudCtx.fillText('CRASH', width / 2 - 72, height / 2 - 20);
-                    hudCtx.font = 'bold 20px monospace';
-                    hudCtx.fillText(GameState.crashMessage, width / 2 - 160, height / 2 + 20);
-                    hudCtx.fillText('Press R to reset', width / 2 - 110, height / 2 + 52);
+                    hudCtx.fillStyle = 'rgba(4, 8, 14, 0.55)';
+                    hudCtx.fillRect(0, 0, width, height);
+                    drawPanel(centerX - 220, height / 2 - 92, 440, 168, 18);
+                    glowText('CRASHED', centerX, height / 2 - 34, `800 42px ${HUD.mono}`, HUD.danger, 26);
+                    hudCtx.textAlign = 'center';
+                    hudCtx.fillStyle = HUD.value;
+                    hudCtx.font = `500 17px ${HUD.mono}`;
+                    hudCtx.fillText(GameState.crashMessage, centerX, height / 2 + 4);
+                    hudCtx.fillStyle = HUD.label;
+                    hudCtx.font = `600 14px ${HUD.mono}`;
+                    hudCtx.fillText('press R to fly again', centerX, height / 2 + 44);
+                    hudCtx.textAlign = 'left';
                 } else if (FlightModel.speed < FlightModel.stallSpeed && agl > 80) {
-                    hudCtx.fillStyle = 'rgba(255, 0, 0, 0.8)';
-                    hudCtx.font = 'bold 48px monospace';
-                    hudCtx.fillText('STALL WARNING', width / 2 - 180, height / 2 - 70);
+                    glowText('STALL', centerX, height / 2 - 70, `800 40px ${HUD.mono}`, HUD.danger, 24);
                 }
             }
 
             function drawAttitudePanel(panelX, panelY, panelW, panelH, pitch, roll) {
-                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                hudCtx.fillRect(panelX, panelY, panelW, panelH);
-                hudCtx.strokeStyle = '#00ff00';
-                hudCtx.lineWidth = 2;
-                hudCtx.strokeRect(panelX, panelY, panelW, panelH);
-
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = 'bold 18px monospace';
-                hudCtx.fillText('ATTITUDE', panelX + 10, panelY + 24);
+                drawPanel(panelX, panelY, panelW, panelH);
+                hudLabel('ATTITUDE', panelX + 16, panelY + 24);
 
                 const cx = panelX + panelW * 0.5;
-                const cy = panelY + panelH * 0.52;
-                const size = 68;
+                const cy = panelY + panelH * 0.54;
+                const size = 62;
 
                 hudCtx.save();
                 hudCtx.beginPath();
@@ -1346,94 +1588,161 @@
                 hudCtx.clip();
                 hudCtx.translate(cx, cy);
                 hudCtx.rotate(-roll);
-                const pitchOffset = pitch * 85;
-                hudCtx.fillStyle = 'rgba(80, 140, 220, 0.7)';
-                hudCtx.fillRect(-size, -size + pitchOffset, size * 2, size - pitchOffset);
-                hudCtx.fillStyle = 'rgba(90, 70, 40, 0.7)';
-                hudCtx.fillRect(-size, pitchOffset, size * 2, size - pitchOffset);
+                const pitchOffset = pitch * 80;
+
+                const skyGrad = hudCtx.createLinearGradient(0, -size, 0, pitchOffset);
+                skyGrad.addColorStop(0, 'rgba(52, 118, 202, 0.95)');
+                skyGrad.addColorStop(1, 'rgba(126, 186, 240, 0.95)');
+                hudCtx.fillStyle = skyGrad;
+                hudCtx.fillRect(-size * 1.5, -size * 1.5, size * 3, size * 1.5 + pitchOffset);
+
+                const gndGrad = hudCtx.createLinearGradient(0, pitchOffset, 0, size);
+                gndGrad.addColorStop(0, 'rgba(140, 100, 62, 0.95)');
+                gndGrad.addColorStop(1, 'rgba(84, 60, 38, 0.95)');
+                hudCtx.fillStyle = gndGrad;
+                hudCtx.fillRect(-size * 1.5, pitchOffset, size * 3, size * 1.5 - pitchOffset + size);
+
                 hudCtx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-                hudCtx.lineWidth = 2;
+                hudCtx.lineWidth = 1.8;
                 hudCtx.beginPath();
-                hudCtx.moveTo(-size * 0.55, pitchOffset);
-                hudCtx.lineTo(size * 0.55, pitchOffset);
+                hudCtx.moveTo(-size * 0.6, pitchOffset);
+                hudCtx.lineTo(size * 0.6, pitchOffset);
                 hudCtx.stroke();
+
+                // pitch ladder every ~10 degrees
+                hudCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                hudCtx.lineWidth = 1;
+                hudCtx.font = `500 8px ${HUD.mono}`;
+                for (let step = -3; step <= 3; step++) {
+                    if (step === 0) continue;
+                    const y = pitchOffset - step * 24;
+                    hudCtx.beginPath();
+                    hudCtx.moveTo(-16, y);
+                    hudCtx.lineTo(16, y);
+                    hudCtx.stroke();
+                }
                 hudCtx.restore();
 
-                hudCtx.strokeStyle = '#00ff88';
+                hudCtx.strokeStyle = 'rgba(130, 195, 255, 0.55)';
                 hudCtx.lineWidth = 2;
                 hudCtx.beginPath();
                 hudCtx.arc(cx, cy, size, 0, Math.PI * 2);
                 hudCtx.stroke();
 
-                hudCtx.strokeStyle = 'rgba(255, 80, 80, 0.95)';
-                hudCtx.lineWidth = 2;
+                // fixed aircraft symbol
+                hudCtx.strokeStyle = HUD.warn;
+                hudCtx.lineWidth = 2.2;
                 hudCtx.beginPath();
-                hudCtx.moveTo(cx - 22, cy);
-                hudCtx.lineTo(cx - 8, cy);
-                hudCtx.moveTo(cx + 8, cy);
-                hudCtx.lineTo(cx + 22, cy);
-                hudCtx.moveTo(cx, cy - 8);
-                hudCtx.lineTo(cx, cy + 8);
+                hudCtx.moveTo(cx - 24, cy);
+                hudCtx.lineTo(cx - 9, cy);
+                hudCtx.lineTo(cx - 5, cy + 5);
+                hudCtx.lineTo(cx, cy);
+                hudCtx.lineTo(cx + 5, cy + 5);
+                hudCtx.lineTo(cx + 9, cy);
+                hudCtx.lineTo(cx + 24, cy);
                 hudCtx.stroke();
             }
 
             function drawCompass(cx, cy, headingDeg) {
-                const r = 36;
-                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                hudCtx.beginPath();
-                hudCtx.arc(cx, cy, r + 8, 0, Math.PI * 2);
+                const r = 34;
+                roundedPath(cx - r - 10, cy - r - 10, (r + 10) * 2, (r + 10) * 2, r + 10);
+                hudCtx.fillStyle = HUD.panelFill;
                 hudCtx.fill();
-                hudCtx.strokeStyle = '#00ff00';
-                hudCtx.lineWidth = 2;
+                hudCtx.strokeStyle = HUD.panelStroke;
+                hudCtx.lineWidth = 1.5;
                 hudCtx.stroke();
-                hudCtx.save();
-                hudCtx.translate(cx, cy);
-                hudCtx.rotate(-headingDeg * Math.PI / 180);
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = '12px monospace';
-                hudCtx.fillText('N', -4, -r + 4);
-                hudCtx.fillText('E', r - 10, 4);
-                hudCtx.fillText('S', -4, r - 2);
-                hudCtx.fillText('W', -r + 2, 4);
-                hudCtx.restore();
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = 'bold 16px monospace';
-                hudCtx.fillText(
-                    `HDG ${Math.round(headingDeg).toString().padStart(3, '0')}°`,
-                    cx - 36,
-                    cy + r + 22
-                );
+
+                for (let deg = 0; deg < 360; deg += 30) {
+                    const screenA = (deg - headingDeg) * Math.PI / 180;
+                    const cardinal = deg % 90 === 0;
+                    const sin = Math.sin(screenA);
+                    const cos = Math.cos(screenA);
+                    hudCtx.strokeStyle = cardinal ? 'rgba(240, 250, 255, 0.9)' : 'rgba(150, 200, 255, 0.45)';
+                    hudCtx.lineWidth = cardinal ? 2 : 1;
+                    hudCtx.beginPath();
+                    hudCtx.moveTo(cx + sin * (r - 1), cy - cos * (r - 1));
+                    hudCtx.lineTo(cx + sin * (r - (cardinal ? 8 : 5)), cy - cos * (r - (cardinal ? 8 : 5)));
+                    hudCtx.stroke();
+                    if (cardinal) {
+                        hudCtx.fillStyle = deg === 0 ? HUD.accent : 'rgba(220, 238, 255, 0.9)';
+                        hudCtx.font = `700 12px ${HUD.mono}`;
+                        hudCtx.textAlign = 'center';
+                        hudCtx.fillText('NESW'[deg / 90], cx + sin * (r - 16), cy - cos * (r - 16) + 4);
+                    }
+                }
+                hudCtx.textAlign = 'left';
+
+                // lubber line
+                hudCtx.fillStyle = HUD.accent;
+                hudCtx.beginPath();
+                hudCtx.moveTo(cx, cy - r + 2);
+                hudCtx.lineTo(cx - 5, cy - r - 8);
+                hudCtx.lineTo(cx + 5, cy - r - 8);
+                hudCtx.closePath();
+                hudCtx.fill();
+
+                const hdgText = `${Math.round(headingDeg).toString().padStart(3, '0')}°`;
+                drawPanel(cx - 33, cy + r + 14, 66, 24, 12);
+                hudCtx.fillStyle = HUD.value;
+                hudCtx.font = `700 14px ${HUD.mono}`;
+                hudCtx.textAlign = 'center';
+                hudCtx.fillText(hdgText, cx, cy + r + 31);
+                hudCtx.textAlign = 'left';
             }
 
             function drawMiniMap(x, y, size) {
                 const scale = size / 10000;
-                hudCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-                hudCtx.fillRect(x, y, size, size);
-                hudCtx.strokeStyle = '#00ff00';
-                hudCtx.strokeRect(x, y, size, size);
-                const px = FlightModel.position.x;
-                const pz = FlightModel.position.z;
+                drawPanel(x, y, size, size, 14);
+                hudCtx.save();
+                roundedPath(x, y, size, size, 14);
+                hudCtx.clip();
+
+                // faint range grid
+                hudCtx.strokeStyle = 'rgba(130, 195, 255, 0.12)';
+                hudCtx.lineWidth = 1;
+                for (let i = 1; i < 4; i++) {
+                    hudCtx.beginPath();
+                    hudCtx.moveTo(x + (size / 4) * i, y);
+                    hudCtx.lineTo(x + (size / 4) * i, y + size);
+                    hudCtx.moveTo(x, y + (size / 4) * i);
+                    hudCtx.lineTo(x + size, y + (size / 4) * i);
+                    hudCtx.stroke();
+                }
+
                 const markerColors = {
-                    city: '#ffee88',
-                    tower: '#ff4444',
-                    mountain: '#aa7744',
-                    runway: '#cccccc'
+                    city: '#ffd76b',
+                    tower: '#ff5560',
+                    mountain: '#b98a5e',
+                    runway: '#d8e4ee'
                 };
                 CollisionSystem.mapMarkers.forEach((m) => {
                     const mx = x + (m.x + 5000) * scale;
                     const mz = y + (m.z + 5000) * scale;
-                    hudCtx.fillStyle = markerColors[m.kind] || '#88ff88';
-                    hudCtx.fillRect(mx - 2, mz - 2, 4, 4);
+                    hudCtx.fillStyle = markerColors[m.kind] || '#8fd8a0';
+                    hudCtx.beginPath();
+                    hudCtx.arc(mx, mz, m.kind === 'city' ? 3.4 : 2.2, 0, Math.PI * 2);
+                    hudCtx.fill();
                 });
-                const playerX = x + (px + 5000) * scale;
-                const playerZ = y + (pz + 5000) * scale;
-                hudCtx.fillStyle = '#00ff00';
+
+                // player: heading triangle with glow
+                const playerX = x + (FlightModel.position.x + 5000) * scale;
+                const playerZ = y + (FlightModel.position.z + 5000) * scale;
+                hudCtx.save();
+                hudCtx.translate(playerX, playerZ);
+                hudCtx.rotate(-FlightModel.yaw);
+                hudCtx.shadowColor = HUD.accent;
+                hudCtx.shadowBlur = 8;
+                hudCtx.fillStyle = HUD.accent;
                 hudCtx.beginPath();
-                hudCtx.arc(playerX, playerZ, 4, 0, Math.PI * 2);
+                hudCtx.moveTo(0, -6);
+                hudCtx.lineTo(4.5, 5);
+                hudCtx.lineTo(-4.5, 5);
+                hudCtx.closePath();
                 hudCtx.fill();
-                hudCtx.fillStyle = '#00ff00';
-                hudCtx.font = '11px monospace';
-                hudCtx.fillText('MAP', x + 4, y + 12);
+                hudCtx.restore();
+                hudCtx.restore();
+
+                hudLabel('MAP · 10 KM', x + 12, y + 18);
             }
             
             function setupEventListeners() {
@@ -1617,9 +1926,10 @@
                 lastTime = currentTime;
                 
                 if (GameState.isPlaying && deltaTime > 0) {
+                    GameState.flightTime += deltaTime;
                     updateDayNight(deltaTime);
                     FlightModel.update(deltaTime);
-                    updateAirplane();
+                    updateAirplane(deltaTime);
                     updateCamera(deltaTime);
                     updateCrashParticles(deltaTime);
 

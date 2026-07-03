@@ -1,6 +1,6 @@
 {
   "name": "sky-vector-3d",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Browser-based 3D flight simulator built with Three.js",
   "type": "module",
   "private": false,

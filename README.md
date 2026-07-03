@@ -54,9 +54,14 @@ npm start
 - City on high ground, two runway strips, roads, instanced forests
 
 ### Graphics & atmosphere
-- Animated water shader, gradient sky with sun disc, exponential fog, day/night cycle
-- `MeshStandardMaterial` lighting, camera-follow shadows, cloud distance fade
-- Light post-processing (bloom, exposure, saturation)
+- Sky shader with horizon haze, sun disc + glow, **stars and moon at night**, golden hour at sunrise and sunset
+- Water shader: multi-octave waves, fresnel sky reflection, sun glint and sparkle
+- Smooth-blended terrain biomes (beach, meadow, alpine, rock, snow) with valley shading
+- Soft billboard clouds, ridged snow-capped mountains, sun lens flare
+- **Wingtip vapor trails**, nav lights and tail strobe, propeller blur disk
+- City buildings with **windows that light up at night**
+- Post-processing: bloom, vignette, exposure/saturation; camera-follow shadows; speed-reactive FOV
+- Glass-panel HUD and a redesigned title screen
 
 ### Audio
 - Engine and wind (Web Audio), stall beep, scrape, splash, and crash sounds (starts after you begin flying)

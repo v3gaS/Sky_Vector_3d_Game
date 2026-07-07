@@ -1,8 +1,10 @@
 # SkyVector
 
-Browser-based 3D flight simulator built with Three.js — procedural terrain, collision, arcade flight controls, and a full HUD. No build step: serve the folder and fly.
+Browser-based 3D flight simulator built with Three.js — procedural terrain, ring-race courses, a living world (bird flocks, balloons, AI traffic), aurora nights, a generative soundtrack, and a full glass-panel HUD. No build step, no assets, no framework: everything is procedural, in three plain script files. Serve the folder and fly.
 
-![SkyVector — flight over the city and hills](docs/assets/screenshot.png)
+![SkyVector — racing the Harbor Run at golden hour](docs/assets/screenshot.png)
+
+![SkyVector — aurora borealis over the northern sea at night](docs/assets/screenshot-aurora.png)
 
 <p align="center">
   <img src="docs/assets/gameplay.gif" alt="SkyVector gameplay clip" width="640">
@@ -39,8 +41,34 @@ npm start
 | V | Toggle cockpit / external camera |
 | R | Reset position / recover after crash |
 | Space | Start from title screen |
+| 1 / 2 / 3 | Start a race course (0 or Esc cancels) |
+| M | Toggle music |
+| P | Photo mode (hide HUD) |
+| Gamepad | Left stick aim, triggers throttle, A reset, Y view |
 
 ## Features
+
+### Racing
+- Three ring-race courses: **Harbor Run** (easy), **City Slalom** (thread the skyscraper canyons), **Summit Climb** (high-altitude reversals)
+- Glowing rings with light-pillar beacons, live timer, bearing chevron to the next ring
+- Best times persist per course (localStorage); crash aborts the run
+
+### Living world
+- Bird flocks (boids) patrolling the coastline — they scatter if you buzz them
+- Hot-air balloons drifting at altitude, burner-glow at night
+- Two AI gliders on circuits with their own vapor trails
+- Runway edge lighting, rotating airport beacon, tower strobes after dark
+
+### Sky & atmosphere
+- **Aurora borealis** curtains in the northern night sky, shooting stars, distant heat lightning, marsh fireflies
+- Sky shader with horizon haze, sun disc + glow, stars and moon; golden hour with a low sun at dawn/dusk
+- God rays, sun lens flare, bloom + vignette post-processing
+- Water shader: multi-octave waves, fresnel sky reflection, sun glint
+- Wingtip vapor trails, nav lights and tail strobe
+
+### Generative soundtrack
+- Procedural Web Audio score — warm lydian pads by day, sparse minor voicings at night, dusk shimmer
+- Ducks to a low drone when you crash; **M** to mute
 
 ### Flight & HUD
 - Arcade flight model with stall, throttle, and mouse aim
@@ -70,11 +98,15 @@ npm start
 
 | Path | Purpose |
 | --- | --- |
-| `index.html` | Game entry (markup, HUD, flight logic) |
-| `js/world-graphics.js` | Terrain, water, sky, ground sampling, post-FX, trees |
-| `vendor/three.js` | Bundled Three.js runtime |
+| `index.html` | Game entry: flight model, collision, HUD, input, module host |
+| `js/world-graphics.js` | Terrain, water, sky, clouds, post-FX, shared rendering helpers |
+| `js/challenges.js` | Ring-race courses, timing, best times |
+| `js/ambient.js` | Birds, balloons, AI traffic, airfield night lighting |
+| `js/skyfx.js` | Aurora, shooting stars, heat lightning, fireflies |
+| `js/soundtrack.js` | Generative Web Audio score |
+| `vendor/three.js` | Bundled Three.js runtime (r150 classic build) |
 | `docs/assets/screenshot.png` | README hero image |
-| `docs/assets/gameplay.gif` | Optional animated demo |
+| `docs/assets/gameplay.gif` | Animated demo |
 
 ## Regenerating the gameplay GIF
 

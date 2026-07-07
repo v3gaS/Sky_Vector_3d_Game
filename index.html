@@ -250,8 +250,12 @@
                 <div class="row"><kbd>Ctrl</kbd><span class="desc">Throttle down</span></div>
                 <div class="row"><kbd>V</kbd><span class="desc">Cockpit / chase view</span></div>
                 <div class="row"><kbd>R</kbd><span class="desc">Reset / recover</span></div>
+                <div class="row"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><span class="desc">Race courses</span></div>
+                <div class="row"><kbd>M</kbd><span class="desc">Music on / off</span></div>
+                <div class="row"><kbd>P</kbd><span class="desc">Photo mode</span></div>
+                <div class="row"><kbd>🎮</kbd><span class="desc">Gamepad supported</span></div>
             </div>
-            <div class="hint">Watch AGL — buildings, towers, trees, and mountains are solid.</div>
+            <div class="hint">Watch AGL — buildings, towers, trees, and mountains are solid. Chase the glowing rings for best times.</div>
             <div class="start-prompt">Press <kbd>Space</kbd> to fly</div>
         </div>
     </div>
@@ -259,6 +263,11 @@
     <!-- Load Three.js using the standalone build -->
     <script src="vendor/three.js"></script>
     <script src="js/world-graphics.js"></script>
+    <!-- Feature modules: self-register on window.SkyVectorMods (see CLAUDE.md) -->
+    <script src="js/challenges.js"></script>
+    <script src="js/ambient.js"></script>
+    <script src="js/skyfx.js"></script>
+    <script src="js/soundtrack.js"></script>
     
     <script>
         // Simple loading check
@@ -633,6 +642,7 @@
                 GameState.crashMessage = '';
                 GameState.crashFlash = 0;
                 GameState.controlPenalty = 0;
+                crashOrbitFloor = null;
                 crashParticles.length = 0;
                 particleVelocities.length = 0;
                 if (particlePoints) particlePoints.visible = false;
@@ -833,8 +843,32 @@
             let treeInstances = null;
             const clouds = [];
             const Gfx = window.SkyVectorGfx;
+            // Feature modules (js/challenges.js, js/ambient.js, ...) self-register here.
+            const Mods = window.SkyVectorMods || [];
+            const modTime = { t: 0, day: 1, dusk: 0, night: 0 };
+            let modCtx = null;
+            let hudHidden = false;
             const cameraTarget = new THREE.Vector3();
             const cameraShakeOffset = new THREE.Vector3();
+            const crashOrbitPos = new THREE.Vector3();
+            let crashOrbitAngle = 0;
+            let crashOrbitFloor = null;
+
+            // Orbit floor: clear the tallest registered obstacle within orbit reach so the
+            // cinematic camera doesn't sweep through neighboring buildings/towers.
+            function computeCrashOrbitFloor() {
+                const orbitReach = 95 + 40;
+                let floor = -Infinity;
+                for (let i = 0; i < CollisionSystem.obstacles.length; i++) {
+                    const o = CollisionSystem.obstacles[i];
+                    if (horizontalDist(FlightModel.position.x, FlightModel.position.z, o.x, o.z) > orbitReach) {
+                        continue;
+                    }
+                    const top = o.type === 'box' ? o.y + o.hy : o.y + o.height * 0.5;
+                    floor = Math.max(floor, top + 14);
+                }
+                return floor === -Infinity ? null : floor;
+            }
             const wingTipLocal = [new THREE.Vector3(-19.2, 0.9, 2.1), new THREE.Vector3(19.2, 0.9, 2.1)];
             const wingTipWorld = new THREE.Vector3();
             const wingTipPrev = [new THREE.Vector3(), new THREE.Vector3()];
@@ -889,11 +923,59 @@
                 vaporTrail = Gfx.createVaporTrail(scene);
                 sunFlare = Gfx.createSunFlare(scene);
                 postFX = Gfx.createPostFX(renderer);
+                initModules();
                 updateDayNight(0);
-                
+
                 setupEventListeners();
 
                 requestAnimationFrame(animate);
+            }
+
+            function initModules() {
+                modCtx = {
+                    THREE,
+                    scene,
+                    camera,
+                    Gfx,
+                    ground: (x, z) => propGroundHeight(x, z),
+                    waterY: WATER_SURFACE,
+                    world: {
+                        size: 10000,
+                        city: { x: CITY_CENTER.x, z: CITY_CENTER.z },
+                        towers: 8,
+                        mountains: 14,
+                        runways: [
+                            { x: 420, z: 380, heading: 0.15, length: 420, width: 48 },
+                            { x: 2500, z: -1500, heading: 0.35, length: 360, width: 42 }
+                        ]
+                    },
+                    plane: {
+                        position: FlightModel.position,
+                        forward: FlightModel.forward,
+                        up: FlightModel.up,
+                        right: FlightModel.right,
+                        velocity: FlightModel.velocity,
+                        get speed() { return FlightModel.speed; },
+                        get roll() { return FlightModel.roll; },
+                        get pitch() { return FlightModel.pitch; },
+                        get yaw() { return FlightModel.yaw; },
+                        get throttle() { return FlightModel.throttle; },
+                        get crashed() { return GameState.crashed; },
+                        get isPlaying() { return GameState.isPlaying; }
+                    },
+                    time: modTime,
+                    audio: () => AudioFX.ctx
+                };
+                Mods.forEach((mod) => {
+                    try {
+                        if (mod.init) mod.init(modCtx);
+                    } catch (err) {
+                        console.error(`SkyVector module "${mod.name}" failed to init:`, err);
+                        mod.update = null;
+                        mod.drawHUD = null;
+                        mod.onKey = null;
+                    }
+                });
             }
             
             function createLighting() {
@@ -922,6 +1004,10 @@
                 const duskDist = Math.min(Math.abs(t - 0.25), Math.abs(t - 0.75));
                 const dusk = Math.pow(Math.max(0, 1 - duskDist * 4), 2);
                 const night = 1 - day;
+                modTime.t = t;
+                modTime.day = day;
+                modTime.dusk = dusk;
+                modTime.night = clamp(1 - day * 1.6, 0, 1);
 
                 if (skyUniforms) {
                     Gfx.updateSkyAndFog({ day, dusk }, skyUniforms, scene, waterUniforms);
@@ -929,7 +1015,8 @@
                 if (directionalLight) {
                     directionalLight.color.setRGB(1, 0.94 - dusk * 0.25, 0.75 - dusk * 0.35);
                     directionalLight.intensity = 0.1 + day * 1.05;
-                    Gfx.SUN_DIR.set(0.25, 0.35 + day * 0.5, 0.35).normalize();
+                    // sun rides low at dawn/dusk for golden light + god rays, high at noon
+                    Gfx.SUN_DIR.set(0.25, 0.09 + day * 0.75, 0.35).normalize();
                     if (skyUniforms) skyUniforms.sunDirection.value.copy(Gfx.SUN_DIR);
                     if (waterUniforms) waterUniforms.sunDirection.value.copy(Gfx.SUN_DIR);
                 }
@@ -1303,6 +1390,28 @@
                     cameraShakeOffset.set(0, 0, 0);
                 }
 
+                if (GameState.crashed) {
+                    // slow cinematic orbit around the crash site
+                    if (crashOrbitFloor === null) {
+                        const floor = computeCrashOrbitFloor();
+                        crashOrbitFloor = floor === null ? -Infinity : floor;
+                    }
+                    crashOrbitAngle += deltaTime * 0.32;
+                    const orbitR = 95;
+                    const ox = FlightModel.position.x + Math.cos(crashOrbitAngle) * orbitR;
+                    const oz = FlightModel.position.z + Math.sin(crashOrbitAngle) * orbitR;
+                    const oy = Math.max(
+                        FlightModel.position.y + 34,
+                        propGroundHeight(ox, oz) + 16,
+                        crashOrbitFloor
+                    );
+                    cameraTarget.copy(FlightModel.position);
+                    dampVector(camera.position, crashOrbitPos.set(ox, oy, oz), 1.8, deltaTime);
+                    camera.up.set(0, 1, 0);
+                    camera.lookAt(cameraTarget);
+                    return;
+                }
+
                 if (GameState.viewMode === 'cockpit') {
                     const cockpitPosition = FlightModel.position.clone()
                         .addScaledVector(FlightModel.up, 2.8)
@@ -1383,8 +1492,9 @@
                     vaporTrail.update(deltaTime, 0);
                 }
 
-                // Hide airplane in cockpit view
-                airplane.visible = GameState.viewMode !== 'cockpit';
+                // Hide airplane in cockpit view — but the crash orbit cam is always
+                // external, so the wreck must be visible while crashed
+                airplane.visible = GameState.crashed || GameState.viewMode !== 'cockpit';
             }
             
             const HUD = {
@@ -1434,12 +1544,46 @@
                 hudCtx.restore();
             }
 
+            const hudApi = {
+                ctx2d: null,
+                w: 0,
+                h: 0,
+                panel: null,
+                label: null,
+                glow: null,
+                mono: null,
+                colors: null
+            };
+
+            function drawModuleHUDs(width, height) {
+                hudApi.ctx2d = hudCtx;
+                hudApi.w = width;
+                hudApi.h = height;
+                hudApi.panel = drawPanel;
+                hudApi.label = hudLabel;
+                hudApi.glow = glowText;
+                hudApi.mono = HUD.mono;
+                hudApi.colors = HUD;
+                for (let m = 0; m < Mods.length; m++) {
+                    if (!Mods[m].drawHUD) continue;
+                    try {
+                        Mods[m].drawHUD(hudApi, modCtx);
+                    } catch (err) {
+                        console.error(`SkyVector module "${Mods[m].name}" drawHUD failed:`, err);
+                        Mods[m].drawHUD = null;
+                    }
+                }
+            }
+
             function drawHUD() {
                 const width = window.innerWidth;
                 const height = window.innerHeight;
                 hudCtx.clearRect(0, 0, width, height);
 
                 if (!GameState.isPlaying) return;
+
+                // photo mode: hide everything unless we crashed (player needs the reset prompt)
+                if (hudHidden && !GameState.crashed) return;
 
                 if (GameState.crashFlash > 0.05) {
                     hudCtx.fillStyle = `rgba(220, 30, 30, ${GameState.crashFlash * 0.4})`;
@@ -1532,11 +1676,13 @@
 
                 // --- bottom hint chips ---
                 hudCtx.font = `500 11.5px ${HUD.mono}`;
-                const hint = 'MOUSE aim · WASD assist · SHIFT/CTRL throttle · R reset';
+                const hint = 'MOUSE aim · SHIFT/CTRL throttle · 1·2·3 race · M music · P photo · R reset';
                 const hintW = hudCtx.measureText(hint).width + 28;
                 drawPanel(20, height - 46, hintW, 28, 14);
                 hudCtx.fillStyle = 'rgba(190, 220, 250, 0.75)';
                 hudCtx.fillText(hint, 34, height - 27);
+
+                drawModuleHUDs(width, height);
 
                 // --- warnings ---
                 if (GameState.inWater && !GameState.crashed) {
@@ -1748,6 +1894,16 @@
             function setupEventListeners() {
                 document.addEventListener('keydown', handleKeyDown);
                 document.addEventListener('keyup', handleKeyUp);
+                // rAF stops in hidden tabs but AudioContext keeps rendering — silence
+                // engine, wind, and soundtrack together while backgrounded.
+                document.addEventListener('visibilitychange', () => {
+                    if (!AudioFX.ctx) return;
+                    if (document.hidden && AudioFX.ctx.state === 'running') {
+                        AudioFX.ctx.suspend();
+                    } else if (!document.hidden && AudioFX.ctx.state === 'suspended' && GameState.isPlaying) {
+                        AudioFX.ctx.resume();
+                    }
+                });
                 document.addEventListener('pointermove', handlePointerMove);
                 document.addEventListener('pointerleave', centerPointerAim);
                 document.querySelector('.start-prompt').addEventListener('click', startGame);
@@ -1766,7 +1922,48 @@
                 if (GameState.crashed) {
                     if (event.code === 'KeyR' && !event.repeat) {
                         resetPlane();
+                        return;
                     }
+                    // music mute and photo mode still work on the crash screen
+                    if (event.code === 'KeyP' && !event.repeat) {
+                        hudHidden = !hudHidden;
+                        return;
+                    }
+                    if (!event.repeat && modCtx) {
+                        for (let m = 0; m < Mods.length; m++) {
+                            if (!Mods[m].onKey) continue;
+                            try {
+                                if (Mods[m].onKey(event.code, modCtx)) {
+                                    event.preventDefault();
+                                    break;
+                                }
+                            } catch (err) {
+                                console.error(`SkyVector module "${Mods[m].name}" onKey failed:`, err);
+                                Mods[m].onKey = null;
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                // feature modules get first crack at keys (race select, music toggle, ...)
+                if (!event.repeat && modCtx) {
+                    for (let m = 0; m < Mods.length; m++) {
+                        if (!Mods[m].onKey) continue;
+                        try {
+                            if (Mods[m].onKey(event.code, modCtx)) {
+                                event.preventDefault();
+                                return;
+                            }
+                        } catch (err) {
+                            console.error(`SkyVector module "${Mods[m].name}" onKey failed:`, err);
+                            Mods[m].onKey = null;
+                        }
+                    }
+                }
+
+                if (event.code === 'KeyP' && !event.repeat) {
+                    hudHidden = !hudHidden;
                     return;
                 }
 
@@ -1914,6 +2111,81 @@
                 cameraTarget.copy(FlightModel.position);
             }
             
+            const sunWorldPos = new THREE.Vector3();
+            const camDir = new THREE.Vector3();
+            function updateSunScreen() {
+                if (!postFX || !postFX.uniforms.sunScreen) return;
+                camera.getWorldDirection(camDir);
+                const facing = camDir.dot(Gfx.SUN_DIR);
+                // skip the ray march entirely at night or with the sun far off-axis
+                if (facing <= 0.25 || modTime.day < 0.12) {
+                    postFX.uniforms.raysAmount.value = 0;
+                    return;
+                }
+                sunWorldPos.copy(camera.position).addScaledVector(Gfx.SUN_DIR, 40000);
+                sunWorldPos.project(camera);
+                postFX.uniforms.sunScreen.value.set(
+                    (sunWorldPos.x + 1) * 0.5,
+                    (sunWorldPos.y + 1) * 0.5
+                );
+                postFX.uniforms.raysAmount.value =
+                    Math.pow(clamp(facing, 0, 1), 2) * (0.2 + modTime.day * 0.8) * 0.55;
+            }
+
+            let gamepadViewHeld = false;
+            let gamepadBlocked = false;
+            // Which channels the gamepad currently owns — released channels are written
+            // back to neutral exactly once so mouse/keyboard regain control.
+            const gamepadHeld = { aim: false, yaw: false, throttle: false };
+            function pollGamepad() {
+                if (gamepadBlocked) return;
+                let gp = null;
+                try {
+                    const pads = navigator.getGamepads ? navigator.getGamepads() : null;
+                    gp = pads && (pads[0] || pads[1]);
+                } catch (err) {
+                    // Permissions-Policy can make getGamepads() throw (cross-origin iframes)
+                    gamepadBlocked = true;
+                    return;
+                }
+                if (!gp) return;
+                const dz = (v) => (Math.abs(v) < 0.14 ? 0 : v);
+                const ax = dz(gp.axes[0] || 0);
+                const ay = dz(gp.axes[1] || 0);
+                if (ax !== 0 || ay !== 0) {
+                    ControlState.aimX = clamp(ax, -1, 1);
+                    ControlState.aimY = clamp(-ay, -1, 1);
+                    gamepadHeld.aim = true;
+                } else if (gamepadHeld.aim) {
+                    ControlState.aimX = 0;
+                    ControlState.aimY = 0;
+                    gamepadHeld.aim = false;
+                }
+                const yaw = dz(gp.axes[2] || 0);
+                if (yaw !== 0) {
+                    ControlState.yaw = clamp(-yaw, -1, 1);
+                    gamepadHeld.yaw = true;
+                } else if (gamepadHeld.yaw) {
+                    ControlState.yaw = 0;
+                    gamepadHeld.yaw = false;
+                }
+                const rt = gp.buttons[7] ? gp.buttons[7].value : 0;
+                const lt = gp.buttons[6] ? gp.buttons[6].value : 0;
+                if (rt > 0.05 || lt > 0.05) {
+                    ControlState.throttle = clamp(rt - lt, -1, 1);
+                    gamepadHeld.throttle = true;
+                } else if (gamepadHeld.throttle) {
+                    ControlState.throttle = 0;
+                    gamepadHeld.throttle = false;
+                }
+                if (gp.buttons[0] && gp.buttons[0].pressed && GameState.crashed) resetPlane();
+                const viewBtn = gp.buttons[3] && gp.buttons[3].pressed;
+                if (viewBtn && !gamepadViewHeld) {
+                    GameState.viewMode = GameState.viewMode === 'cockpit' ? 'external' : 'cockpit';
+                }
+                gamepadViewHeld = !!viewBtn;
+            }
+
             let lastTime = 0;
             let wasInWater = false;
             function animate(currentTime) {
@@ -1927,11 +2199,22 @@
                 
                 if (GameState.isPlaying && deltaTime > 0) {
                     GameState.flightTime += deltaTime;
+                    pollGamepad();
                     updateDayNight(deltaTime);
                     FlightModel.update(deltaTime);
                     updateAirplane(deltaTime);
                     updateCamera(deltaTime);
                     updateCrashParticles(deltaTime);
+
+                    for (let m = 0; m < Mods.length; m++) {
+                        if (!Mods[m].update) continue;
+                        try {
+                            Mods[m].update(deltaTime, modCtx);
+                        } catch (err) {
+                            console.error(`SkyVector module "${Mods[m].name}" update failed:`, err);
+                            Mods[m].update = null;
+                        }
+                    }
 
                     if (GameState.inWater && !wasInWater) {
                         AudioFX.playSplash();
@@ -1963,6 +2246,7 @@
                         waterUniforms.time.value += deltaTime;
                     }
                     Gfx.updateCloudsForCamera(clouds, camera.position);
+                    updateSunScreen();
                 }
                 
                 drawHUD();

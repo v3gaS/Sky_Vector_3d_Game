@@ -9,9 +9,33 @@ Serve statically (`npm start` → python http.server 8080); `file://` won't work
 
 | Path | What lives there |
 | --- | --- |
-| `index.html` | All game logic in one inline script: GameState, FlightModel (physics), CollisionSystem, AudioFX (Web Audio), world assembly, HUD (2D canvas), input, title-screen CSS/markup |
-| `js/world-graphics.js` | `window.SkyVectorGfx` (aka `Gfx`) — rendering module: terrain mesh + biome vertex colors, water/sky shaders, post-FX, cloud sprites, mountain geometry, building facade materials, vapor trail, sun flare, tree instancing, ground raycaster |
+| `index.html` | Core game in one inline script: GameState, FlightModel (physics), CollisionSystem, AudioFX (Web Audio), world assembly, HUD (2D canvas), input, gamepad, module host (`initModules`/`drawModuleHUDs`/onKey dispatch), god-ray sun tracking, crash orbit cam, title screen |
+| `js/world-graphics.js` | `window.SkyVectorGfx` (aka `Gfx`) — rendering module: terrain mesh + biome vertex colors, water/sky shaders, post-FX (bloom/vignette/god rays), cloud sprites, mountain geometry, building facade materials, vapor trail, sun flare, tree instancing, ground raycaster |
+| `js/challenges.js` | Module: 3 ring-race courses, timing, localStorage best times (`svx-best-0/1/2`), race HUD strip |
+| `js/ambient.js` | Module: bird boids, balloons, AI gliders, runway/beacon/tower night lights |
+| `js/skyfx.js` | Module: aurora curtains, shooting stars, heat lightning, fireflies |
+| `js/soundtrack.js` | Module: generative Web Audio score, M mute, crash duck |
 | `scripts/capture-readme-gif.mjs` | Playwright + ffmpeg → `docs/assets/gameplay.gif` |
+
+## Module system (v1.3.0)
+
+Feature modules are plain IIFE scripts that push `{ name, init(ctx), update(dt, ctx),
+drawHUD(hud, ctx)?, onKey(code, ctx)? }` onto `window.SkyVectorMods`. Script tags load
+after `world-graphics.js`, before the inline game script. The host (index.html):
+
+- `initModules()` builds `modCtx` (THREE, scene, camera, Gfx, `ground(x,z)` raycast,
+  `waterY`, `world` layout facts, live-getter `plane` view, shared `time` object,
+  `audio()` accessor) and calls each `init` in a try/catch — a throwing module is
+  disabled, not fatal.
+- `update(dt, ctx)` runs each frame while playing (so module clocks pause with the game);
+  `drawHUD(hud, ctx)` gets the glass-panel helpers (`panel/label/glow/mono/colors`);
+  `onKey` fires on non-repeat keydown, first-consumer-wins, ordered by script-tag order
+  (challenges → ambient → skyfx → soundtrack), BEFORE the host's own P/V/R handling.
+- Contract details modules rely on: `ctx.plane.position/forward/...` are live Vector3
+  references; scalars are getters; `ctx.time` is mutated by `updateDayNight` every frame;
+  `ctx.ground` raycasts (init-time only by convention — never per frame).
+- Races consume Escape/Digit0-3 while active. Music is unmuted by default at master 0.14.
+- Photo mode (`hudHidden`, KeyP) suppresses module HUDs too (crash overlay still shows).
 
 ## Verification workflow (do this after any visual/logic change)
 
@@ -63,3 +87,16 @@ only show there. `npm run capture-demo` refreshes the README GIF (needs ffmpeg o
   accepted (reads as marshland); fixing means changing gameplay-coupled terrain.
 - `AGENTS.md` is a generic build-loop policy document, not project facts.
 - Audio only starts after user gesture (Space/click) — AudioContext resume.
+- Ambient/skyfx objects are visual-only (no CollisionSystem registration for modules) —
+  you fly through birds, balloons, gliders, rings' pillars, beacon tower.
+- Aurora sits ~12-15 km north (-Z); from the far south of the map it reads subtler.
+- `Gfx.SUN_DIR` elevation now follows the day (`0.09 + day*0.75` in `updateDayNight`) —
+  the sun sets/rises near the horizon; god-ray strength is tied to facing it.
+- v1.3.0 sequence for takeoff-adjacent work: `initModules()` must run after the world
+  is built (challenges raycasts terrain + traverses buildings; ambient places lights).
+- Module init performs ~300 one-time terrain raycasts (no BVH in r150) — a small load
+  stall accepted by design; NEVER call `ctx.ground` per frame.
+- Adversarially reviewed 2026-07-06 (46-agent workflow): fixed gamepad input latching,
+  crash-cam obstacle clearance + cockpit-crash visibility, module hotkeys while crashed,
+  night god-ray gating, race teleport aborts, balloon/bird city avoidance, hidden-tab
+  audio suspend. Soak: 60fps, +2.3MB heap over 100s, zero page errors.

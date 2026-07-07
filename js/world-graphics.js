@@ -336,7 +336,9 @@
             bloomStrength: { value: 0.55 },
             saturation: { value: 1.14 },
             contrast: { value: 1.045 },
-            vignette: { value: 0.32 }
+            vignette: { value: 0.32 },
+            sunScreen: { value: new THREE.Vector2(0.5, 0.5) },
+            raysAmount: { value: 0 }
         };
         const material = new THREE.ShaderMaterial({
             uniforms,
@@ -355,6 +357,8 @@
                 uniform float saturation;
                 uniform float contrast;
                 uniform float vignette;
+                uniform vec2 sunScreen;
+                uniform float raysAmount;
                 varying vec2 vUv;
 
                 vec3 bright(vec2 uv) {
@@ -380,6 +384,23 @@
                     bloom += bright(vUv + vec2( 0.0,  px.y) * r2) + bright(vUv + vec2( 0.0, -px.y) * r2);
                     bloom /= 12.0;
                     col += bloom * bloomStrength;
+
+                    // god rays: march toward the sun's screen position accumulating bright sky
+                    if (raysAmount > 0.002) {
+                        vec2 toSun = sunScreen - vUv;
+                        vec2 stepv = toSun / 14.0;
+                        vec2 p = vUv;
+                        float decay = 1.0;
+                        float total = 0.0;
+                        for (int i = 0; i < 14; i++) {
+                            p += stepv;
+                            vec3 s = texture2D(tDiffuse, p).rgb;
+                            total += max(max(max(s.r, s.g), s.b) - 0.62, 0.0) * decay;
+                            decay *= 0.91;
+                        }
+                        float falloff = smoothstep(1.5, 0.25, length(toSun));
+                        col += vec3(1.0, 0.9, 0.72) * total * (raysAmount / 14.0) * falloff * 0.85;
+                    }
 
                     col = adjustSaturation(col, saturation);
                     col = (col - 0.5) * contrast + 0.5;

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0] — 2026-07-06
+
+Gameplay + living-world release, built on a new feature-module system.
+
+### Added
+- **Ring-race challenges** (`js/challenges.js`): three courses — Harbor Run, City Slalom, Summit Climb — glowing rings with light-pillar beacons, live timer/bearing HUD, persistent best times (localStorage). Keys **1/2/3** start, **0/Esc** cancel
+- **Living world** (`js/ambient.js`): boids bird flocks, hot-air balloons with night burner glow, two AI gliders trailing vapor, runway edge lights, rotating airport beacon, tower strobes
+- **Sky drama** (`js/skyfx.js`): aurora borealis curtains in the northern night sky, shooting stars, distant heat lightning, marsh fireflies
+- **Generative soundtrack** (`js/soundtrack.js`): procedural Web Audio score (pad/arp/sub/shimmer layers) that shifts day↔night, ducks on crash. **M** mutes
+- **Module system**: feature modules self-register on `window.SkyVectorMods`; the host drives `init/update/drawHUD/onKey` (contract in CLAUDE.md)
+- God rays: post-FX radial light shafts tracking the sun's screen position
+- Gamepad support (left stick aim, triggers throttle, A reset, Y view toggle)
+- Photo mode (**P** hides the HUD); cinematic crash orbit camera
+- Sun rides low at dawn/dusk — real golden-hour light and sunsets
+
 ## [1.2.0] — 2026-07-02
 
 Visual overhaul across the whole game — no gameplay/physics changes.
